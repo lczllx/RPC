@@ -1,4 +1,4 @@
-#include "../../client/rpc_client.hpp"
+#include "src/client/rpc_client.hpp"
 #include <iostream>
 
 int main(int argc, char *argv[])

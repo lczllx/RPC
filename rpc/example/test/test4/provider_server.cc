@@ -1,5 +1,5 @@
-#include "../../server/rpc_server.hpp"
-#include "../../general/detail.hpp"
+#include "src/server/rpc_server.hpp"
+#include "src/general/detail.hpp"
 #include <iostream>
 #include <thread>
 

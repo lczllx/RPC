@@ -1,4 +1,4 @@
-#include "../../server/rpc_server.hpp"
+#include "src/server/rpc_server.hpp"
 #include <iostream>
 #include <thread>
 

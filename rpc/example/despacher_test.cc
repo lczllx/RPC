@@ -1,6 +1,6 @@
-#include "../general/net.hpp"
-#include "../general/dispacher.hpp"
-#include "../server/rpc_Router.hpp"
+#include "src/general/net.hpp"
+#include "src/general/dispacher.hpp"
+#include "src/server/rpc_router.hpp"
 
 void onrpcRequst(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcRequest::ptr& msg)
 {
@@ -50,9 +50,9 @@ int main()
 }
 
 
-#include "../general/net.hpp"
-#include "../general/dispacher.hpp"
-#include "../client/caller.hpp"
+#include "src/general/net.hpp"
+#include "src/general/dispacher.hpp"
+#include "src/client/caller.hpp"
 #include<thread>
 void onrpcResponse(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcResponse::ptr& msg)
 {

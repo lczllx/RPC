@@ -1,6 +1,6 @@
 
-#include "../../client/rpc_client.hpp"
-#include "../../general/detail.hpp"
+#include "src/client/rpc_client.hpp"
+#include "src/general/detail.hpp"
 #include<thread>
 void onrpcResponse(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcResponse::ptr& msg)
 {
