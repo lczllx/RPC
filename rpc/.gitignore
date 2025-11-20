@@ -1,0 +1,27 @@
+# CMake 构建目录
+build/
+cmake-build/
+CMakeCache.txt
+CMakeFiles/
+*.cmake
+!CMakeLists.txt
+
+# 编译产物
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.out
+
+# IDE 配置（可选，如果团队需要统一配置可以提交）
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 其他
+.DS_Store
+compile_commands.json
+

@@ -1,0 +1,9 @@
+add_executable(test4_provider_server provider_server.cc)
+target_link_libraries(test4_provider_server PRIVATE lcz_rpc)
+
+add_executable(test4_registry_server registry_server.cc)
+target_link_libraries(test4_registry_server PRIVATE lcz_rpc)
+
+add_executable(test4_consumer_client consumer_client.cc)
+target_link_libraries(test4_consumer_client PRIVATE lcz_rpc)
+
