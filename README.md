@@ -53,7 +53,7 @@ cmake --build build -j$(nproc)
 3. **业务层**：RpcServer/RpcClient/RegistryServer/TopicServer 组合实现服务注册、调用与发布订阅。
 4. **治理层**：心跳、负载上报、服务缓存、下线通知由 Registry 子模块持续维护。
 
-`![整体流程](/flowchat/26a5b5b6e1576586f7ba2d3a4ebfdd4c.png)`
+`![整体流程](flowchat/26a5b5b6e1576586f7ba2d3a4ebfdd4c.png)`
 
 ---
 
@@ -92,7 +92,7 @@ cmake --build build -j$(nproc)
 
 ## 核心流程
 ### RPC 调用
-`![RPC调用流程](/flowchat/83485bb481a95b0a48f6b127b3d7ff15.jpg)`
+`![RPC调用流程](flowchat/83485bb481a95b0a48f6b127b3d7ff15.jpg)`
 
 1. RpcCaller 构造 `RpcRequest`，生成 UUID，Requestor 记录回调映射。
 2. Dispatcher 根据 `MsgType` 将请求派发给 RpcRouter。
@@ -100,7 +100,7 @@ cmake --build build -j$(nproc)
 4. Requestor 匹配响应 ID，触发 Future/回调，将结果返回给调用方。
 
 ### 服务注册与发现
-`![注册发现流程](/flowchat/2a1092c377167c55cd48a8d8f234d893.jpg)`
+`![注册发现流程](flowchat/2a1092c377167c55cd48a8d8f234d893.jpg)`
 
 1. Provider 启动后通过 `ClientRegistry::methodRegistry` 注册方法。
 2. RegistryServer 保存映射并接收 HEARTBEAT/LOAD_REPORT。
@@ -108,7 +108,7 @@ cmake --build build -j$(nproc)
 4. Discoverer 根据策略返回 HostDetail，并监听服务下线通知。
 
 ### 发布订阅
-`![Topic流程](/flowchat/c0d65144bad482537c5a761a9e3bea56.jpg)`
+`![Topic流程](flowchat/c0d65144bad482537c5a761a9e3bea56.jpg)`
 
 1. Subscriber 发送 SUBSCRIBE，TopicManager 创建/更新 Topic。
 2. Publisher 发布消息，Topic 根据策略向订阅者推送。
