@@ -1,24 +1,25 @@
 # 轻量级、可扩展的分布式RPC服务框架
+
 > 基于 muduo 的高性能分布式 RPC/Topic 框架，提供服务注册发现、JSON 序列化、主题发布订阅与多种负载均衡策略。
 
 - **作者**：lczllx
-
 - **联系方式**：2181719471@qq.com
+- **开发环境**：Ubuntu VS Code
+- **编译器**：g++
+- **编程语言**：C++
 
-开发环境：Ubuntu VS Code
-
-编译器：g++
-
-编程语言：C++
----
-### 依赖
+## 依赖
 - Linux / macOS，g++ ≥ 9 或 clang ≥ 10
 - CMake ≥ 3.16
 - jsoncpp（FetchContent 自动获取）
 - muduo（本仓库 submodule，默认关闭其示例）
 
+## 快速开始
+
 ### 构建
+
 从项目根目录运行构建脚本：
+
 ```bash
 ./autobuild/build.sh
 ```
@@ -41,9 +42,7 @@ cd rpc
 ./build/example/benchmark/benchmark_client
 ```
 
----
-
-## 功能速览
+## 功能特性
 - **JSON 消息协议**：自定义了 Header + Payload，统一校验字段的合法性和错误码。
 - **注册发现**：RegistryServer 管理服务-方法-实例映射，支持心跳、负载上报、过期剔除及离线通知。
 - **RPC 服务治理**：RpcServer + RpcRouter 提供参数的校验、回调执行以及统一响应。
@@ -51,17 +50,13 @@ cd rpc
 - **Topic 系统**：TopicServer 支持广播、轮询、扇出、源哈希、优先级、冗余等策略。
 - **网络抽象**：抽象出BaseServer/BaseClient结合LVProtocol 封装 muduo库，便于扩展其他事件库。
 
----
-
-## 架构概览
+## 架构设计
 1. **消息层**：`BaseMessage` 抽象派生出 Rpc/Service/Topic 请求与响应，统一 JSON 序列化。
 2. **分发层**：`Dispacher` 按 `MsgType` 将消息路由到 `RpcRouter`、`TopicManager`、`ProviderManager`。
 3. **业务层**：RpcServer/RpcClient/RegistryServer/TopicServer 组合实现服务注册、调用与发布订阅。
 4. **治理层**：心跳、负载上报、服务缓存、下线通知由 Registry 模块维护。
 
 ![整体流程](flowchat/26a5b5b6e1576586f7ba2d3a4ebfdd4c.png)
-
----
 
 ## 核心模块
 ### 消息与协议
@@ -94,8 +89,6 @@ cd rpc
 - `BaseServer`/`BaseClient` 抽象底层实现，`MuduoServer`/`MuduoClient` 实现具体落地。
 - `ServerFactory`/`ClientFactory` 提供统一创建接口，支持扩展其他事件库。
 
----
-
 ## 核心流程
 ### RPC 调用
 ![RPC调用流程](flowchat/83485bb481a95b0a48f6b127b3d7ff15.jpg)
@@ -120,25 +113,31 @@ cd rpc
 2. Publisher 发布消息，Topic 根据策略向订阅者推送。
 3. 支持广播、轮询、扇出、源哈希、优先级、冗余等策略，满足不同 QoS。
 
----
-
 ## 示例代码
 ### 服务端：注册方法 + 自动服务发现
-```1:35:example/test/test1/rpc_server.cc
+
+```cpp
 #include "src/server/rpc_server.hpp"
-...
+
+// 创建服务工厂
+auto req_factory = std::make_shared<ServiceFactory>();
 req_factory->setMethodName("add");
 req_factory->setServiceCallback(add);
+
+// 创建 RPC 服务器（启用服务发现）
 lcz_rpc::server::RpcServer server(
     lcz_rpc::HostInfo("127.0.0.1", 8889),
     true,
     lcz_rpc::HostInfo("127.0.0.1", 8080));
+
 server.registerMethod(req_factory->build());
 server.start();
 ```
 
 ### Requestor：请求 ID → 回调/Future 映射
-```20:128:src/client/requestor.hpp
+
+```cpp
+// src/client/requestor.hpp
 class Requestor {
 public:
     using ReqCallback = std::function<void(const BaseMessage::ptr&)>;
@@ -227,23 +226,28 @@ private:
 ```
 
 ### 客户端：同步 + 异步 Future
-```1:47:example/test/test1/rpc_client.cc
+
+```cpp
+// 创建 RPC 客户端（启用服务发现）
 lcz_rpc::client::RpcClient client(true, "127.0.0.1", 8080);
+
+// 同步调用
 Json::Value params;
 params["num1"] = 66;
 params["num2"] = 33;
 Json::Value result;
 client.call("add", params, result);
+
+// 异步调用（Future 模式）
 Json::Value async_params;
 async_params["num1"] = 66;
 async_params["num2"] = 3;
 lcz_rpc::client::RpcCaller::RpcAsyncRespose future;
 client.call("add", async_params, future);
+auto result = future.get();  // 获取结果
 ```
 
-更多示例位于 `example/`，涵盖消息分发、注册中心、Topic、Benchmark。
-
----
+更多示例位于 `example/` 目录，涵盖消息分发、注册中心、Topic、Benchmark。
 
 ## 性能测试
 `example/benchmark/benchmark_client.cc` 提供开箱即用的压测工具：
@@ -257,8 +261,6 @@ cd rpc
 ./build/example/benchmark/benchmark_client --host 127.0.0.1 --port 8889 \
   --concurrency 32 --requests 100000 --mode async
 ```
-
----
 
 ## 目录结构
 ```
@@ -280,12 +282,7 @@ RPC-/
 └── README.md
 ```
 
-
----
-
 ## 参考资料
 - 《从 0 实现分布式 RPC 框架的思考》系列：[460646015](https://zhuanlan.zhihu.com/p/460646015) / [33298916](https://zhuanlan.zhihu.com/p/33298916) / [388848964](https://zhuanlan.zhihu.com/p/388848964)
 - `libjson-rpc-cpp`：JSON-RPC 框架，提供 stub 生成与多传输层支持 [GitHub](https://github.com/cinemast/libjson-rpc-cpp)
 - `rest_rpc`：轻量级 C++ RPC 框架，API 设计与连接复用方案参考 [GitHub](https://github.com/qicosmos/rest_rpc)
-
-
