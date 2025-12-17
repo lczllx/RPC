@@ -1,9 +1,15 @@
-# RPC 框架
+# 轻量级、可扩展的分布式RPC服务框架
 > 基于 muduo 的高性能分布式 RPC/Topic 框架，提供服务注册发现、JSON 序列化、主题发布订阅与多种负载均衡策略。
 
-- **作者**：lczllx（2024.10-2024.12）
+- **作者**：lczllx
+
 - **联系方式**：2181719471@qq.com
 
+开发环境：Ubuntu VS Code
+
+编译器：g++
+
+编程语言：C++
 ---
 ### 依赖
 - Linux / macOS，g++ ≥ 9 或 clang ≥ 10
@@ -12,16 +18,16 @@
 - muduo（本仓库 submodule，默认关闭其示例）
 
 ### 构建
+从项目根目录运行构建脚本：
 ```bash
-git clone --recursive https://github.com/xxx/rpc.git
-cd rpc
-git submodule update --init --recursive
-cmake -S . -B build -DLCZ_RPC_BUILD_EXAMPLES=ON
-cmake --build build -j$(nproc)
+./autobuild/build.sh
 ```
 
 ### 运行示例
+构建完成后，在 `rpc` 目录下运行示例：
 ```bash
+cd rpc
+
 # 注册中心 + 消息分发
 ./build/example/despacher_server_test
 ./build/example/despacher_client_test
@@ -39,7 +45,7 @@ cmake --build build -j$(nproc)
 
 ## 功能速览
 - **JSON 消息协议**：自定义了 Header + Payload，统一校验字段的合法性和错误码。
-- **注册发现**：RegistryServer 管理 服务-方法-实例映射，支持心跳、负载上报、过期剔除以及离线的通知。
+- **注册发现**：RegistryServer 管理服务-方法-实例映射，支持心跳、负载上报、过期剔除及离线通知。
 - **RPC 服务治理**：RpcServer + RpcRouter 提供参数的校验、回调执行以及统一响应。
 - **客户端能力**：同步/异步调用、Future 回调（重载实现）、策略化负载均衡、服务缓存。
 - **Topic 系统**：TopicServer 支持广播、轮询、扇出、源哈希、优先级、冗余等策略。
@@ -51,7 +57,7 @@ cmake --build build -j$(nproc)
 1. **消息层**：`BaseMessage` 抽象派生出 Rpc/Service/Topic 请求与响应，统一 JSON 序列化。
 2. **分发层**：`Dispacher` 按 `MsgType` 将消息路由到 `RpcRouter`、`TopicManager`、`ProviderManager`。
 3. **业务层**：RpcServer/RpcClient/RegistryServer/TopicServer 组合实现服务注册、调用与发布订阅。
-4. **治理层**：心跳、负载上报、服务缓存、下线通知由 Registry 子模块持续维护。
+4. **治理层**：心跳、负载上报、服务缓存、下线通知由 Registry 模块维护。
 
 ![整体流程](flowchat/26a5b5b6e1576586f7ba2d3a4ebfdd4c.png)
 
@@ -59,7 +65,7 @@ cmake --build build -j$(nproc)
 
 ## 核心模块
 ### 消息与协议
-- **LVProtocol**：长度 + 类型 + 消息 ID + Body，解决粘包拆包，并能秒级定位非法报文。
+- **LVProtocol**：长度 + 类型 + 消息 ID + Body，解决粘包拆包问题。
 - **消息体系**：所有消息继承 `BaseMessage`，实现 `serialize/unserialize/check`，便于扩展。
 - **类型**：RPC 请求/响应、服务注册/发现、Topic 请求/响应等，均基于 JSON 载荷。
 
@@ -86,7 +92,7 @@ cmake --build build -j$(nproc)
 
 ### 网络层
 - `BaseServer`/`BaseClient` 抽象底层实现，`MuduoServer`/`MuduoClient` 实现具体落地。
-- `ServerFactory`/`ClientFactory` 提供统一创建接口，到时候可以引入其他事件库。
+- `ServerFactory`/`ClientFactory` 提供统一创建接口，支持扩展其他事件库。
 
 ---
 
@@ -95,7 +101,7 @@ cmake --build build -j$(nproc)
 ![RPC调用流程](flowchat/83485bb481a95b0a48f6b127b3d7ff15.jpg)
 
 1. RpcCaller 构造 `RpcRequest`，生成 UUID，Requestor 记录回调映射。
-2. Dispatcher 根据 `MsgType` 将请求派发给 RpcRouter。
+2. Dispacher 根据 `MsgType` 将请求派发给 RpcRouter。
 3. RpcRouter 查询 ServiceDescribe、校验参数、执行回调并封装 `RpcResponse`。
 4. Requestor 匹配响应 ID，触发 Future/回调，将结果返回给调用方。
 
@@ -245,8 +251,9 @@ client.call("add", async_params, future);
 - 输出成功率、平均延迟、P50/P90/P99、QPS。
 - 可切换负载均衡策略以对比性能。
 
-运行示例：
+运行示例（在 `rpc` 目录下）：
 ```bash
+cd rpc
 ./build/example/benchmark/benchmark_client --host 127.0.0.1 --port 8889 \
   --concurrency 32 --requests 100000 --mode async
 ```
@@ -255,19 +262,22 @@ client.call("add", async_params, future);
 
 ## 目录结构
 ```
-rpc/
-├── CMakeLists.txt
-├── src/
-│   ├── general/        # 抽象类、协议、工厂
-│   ├── client/         # RpcClient、Requestor、TopicClient
-│   ├── server/         # RpcServer、RegistryServer、TopicServer
-│   └── muduo/          # muduo 子模块
-├── example/
-│   ├── test/           # RPC/Topic 示例
-│   ├── despacher_*     # 消息分发 & 注册中心示例
-│   └── benchmark/      # 压测
+RPC-/
+├── autobuild/          # 构建脚本
+├── rpc/                # RPC 框架源码
+│   ├── CMakeLists.txt
+│   ├── src/
+│   │   ├── general/    # 抽象类、协议、工厂
+│   │   ├── client/     # RpcClient、Requestor、TopicClient
+│   │   ├── server/     # RpcServer、RegistryServer、TopicServer
+│   │   └── muduo/      # muduo 子模块
+│   ├── example/         # 示例程序
+│   │   ├── test/       # RPC/Topic 示例
+│   │   ├── despacher_* # 消息分发 & 注册中心示例
+│   │   └── benchmark/  # 压测
+│   └── build/          # CMake 输出
 ├── flowchat/           # 架构/流程图
-└── build/              # CMake 输出
+└── README.md
 ```
 
 
@@ -278,5 +288,4 @@ rpc/
 - `libjson-rpc-cpp`：JSON-RPC 框架，提供 stub 生成与多传输层支持 [GitHub](https://github.com/cinemast/libjson-rpc-cpp)
 - `rest_rpc`：轻量级 C++ RPC 框架，API 设计与连接复用方案参考 [GitHub](https://github.com/qicosmos/rest_rpc)
 
-> 以上资料帮助规划协议、示例组织与架构演进方向。
 

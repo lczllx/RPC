@@ -49,11 +49,14 @@ fi
 echo -e "${GREEN}服务端已启动 (PID: $SERVER_PID)${NC}"
 
 # 运行测试
+# 注意：单线程和4线程使用相同请求数，便于对比
+TEST_REQUESTS=20000
+
 echo -e "\n${GREEN}========== 测试 1: 单线程延迟测试 ==========${NC}"
-"$BIN_DIR/benchmark_client" single add 10000 0 0 $USE_DISCOVER 127.0.0.1 $SERVER_PORT $REGISTRY_PORT
+"$BIN_DIR/benchmark_client" single add $TEST_REQUESTS 0 0 $USE_DISCOVER 127.0.0.1 $SERVER_PORT $REGISTRY_PORT
 
 echo -e "\n${GREEN}========== 测试 2: 多线程并发测试 (4线程) ==========${NC}"
-"$BIN_DIR/benchmark_client" multi add 50000 4 0 $USE_DISCOVER 127.0.0.1 $SERVER_PORT $REGISTRY_PORT
+"$BIN_DIR/benchmark_client" multi add $TEST_REQUESTS 4 0 $USE_DISCOVER 127.0.0.1 $SERVER_PORT $REGISTRY_PORT
 
 echo -e "\n${GREEN}========== 测试 3: 框架开销测试 (echo方法) ==========${NC}"
 "$BIN_DIR/benchmark_client" single echo 100000 0 0 $USE_DISCOVER 127.0.0.1 $SERVER_PORT $REGISTRY_PORT

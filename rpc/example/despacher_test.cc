@@ -2,4 +2,3 @@
 // - despacher_server_test.cc: 服务端测试
 // - despacher_client_test.cc: 客户端测试
 // 
-// 请使用新的测试文件，此文件保留作为参考

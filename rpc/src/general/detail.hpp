@@ -20,7 +20,7 @@
 
 #define LDEFAULT LINF          // 默认开启所有等级的日志
 #define LOG(level,format,...){\
-    if(level>=LDEFAULT){\
+    if(level>=LERR)/*只打印错误日志*/{\
         time_t t=time(NULL);\
         struct tm *lt=localtime(&t);\
         char time_tmp[32]={0};\
