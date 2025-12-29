@@ -118,30 +118,53 @@ cd rpc
 
 ```cpp
 #include "src/server/rpc_server.hpp"
+#include "src/general/detail.hpp"
 
-// 创建服务工厂
-auto req_factory = std::make_shared<ServiceFactory>();
-req_factory->setMethodName("add");
-req_factory->setServiceCallback(add);
+// 定义服务方法
+void add(const Json::Value &req, Json::Value &resp) {
+    int num1 = req["num1"].asInt();
+    int num2 = req["num2"].asInt();
+    resp = num1 + num2;
+}
 
-// 创建 RPC 服务器（启用服务发现）
-lcz_rpc::server::RpcServer server(
-    lcz_rpc::HostInfo("127.0.0.1", 8889),
-    true,
-    lcz_rpc::HostInfo("127.0.0.1", 8080));
+int main() {
+    // 创建服务工厂，配置方法参数和返回值类型
+    std::unique_ptr<lcz_rpc::server::ServiceFactory> req_factory(
+        new lcz_rpc::server::ServiceFactory());
+    req_factory->setMethodName("add");
+    req_factory->setParamdescribe("num1", lcz_rpc::server::ValType::INTEGRAL);
+    req_factory->setParamdescribe("num2", lcz_rpc::server::ValType::INTEGRAL);
+    req_factory->setReturntype(lcz_rpc::server::ValType::INTEGRAL);
+    req_factory->setServiceCallback(add);
 
-server.registerMethod(req_factory->build());
-server.start();
+    // 创建 RPC 服务器（启用服务发现，注册中心地址 127.0.0.1:8080）
+    lcz_rpc::server::RpcServer server(
+        lcz_rpc::HostInfo("127.0.0.1", 8889),
+        true,
+        lcz_rpc::HostInfo("127.0.0.1", 8080));
+    
+    server.registerMethod(req_factory->build());
+    server.start();
+    return 0;
+}
 ```
 
 ### Requestor：请求 ID → 回调/Future 映射
 
 ```cpp
 // src/client/requestor.hpp
+/* 对客户端的每一个请求进行管理
+ * 发送请求时：创建 ReqDescribe 并存入映射表
+ * 等待响应时：根据请求类型使用不同机制等待结果
+ * 收到响应时：通过 onResponse 查找对应的请求描述，执行相应处理
+ * 清理资源：处理完成后删除请求描述，防止内存泄漏
+ */
 class Requestor {
 public:
     using ReqCallback = std::function<void(const BaseMessage::ptr&)>;
     using AsyncResponse = std::future<BaseMessage::ptr>;
+    
+    // 单个 RPC 请求的描述信息：记录请求类型、回调以及等待中的 promise
     struct ReqDescribe {
         using ptr = std::shared_ptr<ReqDescribe>;
         ReqType reqtype;
@@ -149,7 +172,8 @@ public:
         std::promise<BaseMessage::ptr> response;
         BaseMessage::ptr request;
     };
-
+    
+    // 处理服务端响应：匹配请求 id，触发对应的 promise 或回调
     void onResponse(const BaseConnection::ptr& conn, BaseMessage::ptr& msg) {
         std::string id = msg->rid();
         ReqDescribe::ptr req_desc = getDesc(id);
@@ -158,39 +182,53 @@ public:
             return;
         }
         if (req_desc->reqtype == ReqType::ASYNC) {
-            req_desc->response.set_value(msg);
+            req_desc->response.set_value(msg);  // 设置结果
         } else if (req_desc->reqtype == ReqType::CALLBACK) {
-            if (req_desc->callback) req_desc->callback(msg);
+            if (req_desc->callback) req_desc->callback(msg);  // 回调处理
         } else {
             ELOG("未知请求类型");
         }
-        delDesc(id);
+        delDesc(id);  // 处理完删除掉这个描述信息
     }
-
+    
+    // 异步调用：返回 future 对象
     bool send(const BaseConnection::ptr& conn,
               const BaseMessage::ptr& req,
               AsyncResponse& async_resp) {
         ReqDescribe::ptr req_desc = newDesc(req, ReqType::ASYNC);
-        if (req_desc.get() == nullptr) return false;
-        conn->send(req);
-        async_resp = req_desc->response.get_future();
+        if (req_desc.get() == nullptr) {
+            ELOG("构造请求描述对象失败！");
+            return false;
+        }
+        conn->send(req);  // 异步请求发送
+        async_resp = req_desc->response.get_future();  // 获取关联的 future 对象
         return true;
     }
-
+    
+    // 同步调用：阻塞等待响应
     bool send(const BaseConnection::ptr& conn,
               const BaseMessage::ptr& req,
               BaseMessage::ptr& resp) {
+        DLOG("Requestor sync send id=%s", req->rid().c_str());
         AsyncResponse async_resp;
-        if (send(conn, req, async_resp) == false) return false;
+        if (send(conn, req, async_resp) == false) {
+            ELOG("Requestor sync send failed id=%s", req->rid().c_str());
+            return false;
+        }
         resp = async_resp.get();
+        DLOG("Requestor sync recv id=%s", req->rid().c_str());
         return true;
     }
-
+    
+    // 回调模式：通过回调函数处理响应
     bool send(const BaseConnection::ptr& conn,
               const BaseMessage::ptr& req,
               const ReqCallback& cb) {
         ReqDescribe::ptr req_desc = newDesc(req, ReqType::CALLBACK, cb);
-        if (req_desc.get() == nullptr) return false;
+        if (req_desc.get() == nullptr) {
+            ELOG("构造请求描述对象失败！");
+            return false;
+        }
         conn->send(req);
         return true;
     }
@@ -205,6 +243,7 @@ private:
         req_desc->request = req;
         if (req_type == ReqType::CALLBACK && cb) req_desc->callback = cb;
         _request_desc[req->rid()] = req_desc;
+        DLOG("newDesc add id=%s", req->rid().c_str());
         return req_desc;
     }
 
@@ -221,30 +260,45 @@ private:
     }
 
     std::mutex _mutex;
-    std::unordered_map<std::string, ReqDescribe::ptr> _request_desc;
+    std::unordered_map<std::string, ReqDescribe::ptr> _request_desc;  // rid -> desc
 };
 ```
 
 ### 客户端：同步 + 异步 Future
 
 ```cpp
-// 创建 RPC 客户端（启用服务发现）
-lcz_rpc::client::RpcClient client(true, "127.0.0.1", 8080);
+#include "src/client/rpc_client.hpp"
+#include "src/general/detail.hpp"
 
-// 同步调用
-Json::Value params;
-params["num1"] = 66;
-params["num2"] = 33;
-Json::Value result;
-client.call("add", params, result);
-
-// 异步调用（Future 模式）
-Json::Value async_params;
-async_params["num1"] = 66;
-async_params["num2"] = 3;
-lcz_rpc::client::RpcCaller::RpcAsyncRespose future;
-client.call("add", async_params, future);
-auto result = future.get();  // 获取结果
+int main() {
+    // 创建 RPC 客户端（启用服务发现，注册中心地址 127.0.0.1:8080）
+    lcz_rpc::client::RpcClient client(true, "127.0.0.1", 8080);
+    
+    // 同步调用
+    Json::Value params, result;
+    params["num1"] = 66;
+    params["num2"] = 33;
+    bool ret = client.call("add", params, result);
+    if (ret) {
+        std::cout << "result: " << result.asInt() << std::endl;
+    } else {
+        std::cout << "调用失败" << std::endl;
+    }
+    
+    // 异步调用（Future 模式）
+    Json::Value async_params;
+    lcz_rpc::client::RpcCaller::RpcAsyncRespose resp_future;
+    async_params["num1"] = 66;
+    async_params["num2"] = 3;
+    ret = client.call("add", async_params, resp_future);
+    if (ret) {
+        result = resp_future.get();  // 阻塞等待获取结果
+        std::cout << "result: " << result.asInt() << std::endl;
+    } else {
+        std::cout << "调用失败" << std::endl;
+    }
+    return 0;
+}
 ```
 
 更多示例位于 `example/` 目录，涵盖消息分发、注册中心、Topic、Benchmark。
