@@ -181,6 +181,11 @@ namespace lcz_rpc
           {
             return _connection->connected();
           }
+          // 获取底层连接的 EventLoop（用于定时器）
+          muduo::net::EventLoop* getLoop() const
+          {
+            return _connection->getLoop();
+          }
          private:
          muduo::net::TcpConnectionPtr _connection;
          BaseProtocol::ptr _protocol;

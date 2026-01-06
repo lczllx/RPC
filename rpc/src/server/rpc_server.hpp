@@ -6,6 +6,7 @@
 #include "rpc_topic.hpp"
 #include "../general/net.hpp"
 #include <atomic>//原子操作
+#include <thread>//线程支持
 #include "../general/publicconfig.hpp"
 
 namespace lcz_rpc
@@ -113,11 +114,44 @@ namespace lcz_rpc
                     }
 
                 }
-                  // 在路由器中注册方法
+                  // 在路由器中注册方法（线程安全）
                 _rpc_router->registerMethod(service);
 
             }
+            // 启动服务器（阻塞版本，在调用线程中运行事件循环）
             void start() { _server->start(); }
+            
+            // 启动服务器（非阻塞版本，在单独线程中运行事件循环，支持动态注册服务）
+            //解决start后不能注册服务的问题
+            void startInThread() 
+            { 
+                if (_server_thread.joinable()) {
+                    WLOG("RpcServer 已经在运行中");
+                    return;
+                }
+                _server_thread = std::thread([this]() {
+                    _server->start();  // 在单独线程中阻塞运行
+                });
+                ILOG("RpcServer 已在后台线程启动，主线程可继续调用 registerMethod()");
+            }
+            
+            // 等待服务器线程结束
+            void wait() 
+            {
+                if (_server_thread.joinable()) {
+                    _server_thread.join();
+                }
+            }
+            
+            // 析构函数：确保线程正确退出
+            ~RpcServer() 
+            {
+                if (_server_thread.joinable()) {
+                    // 注意：这里无法直接停止 muduo 的事件循环
+                    // 实际应用中可能需要添加 stop() 方法来优雅关闭
+                    _server_thread.join();
+                }
+            }
         private:
             int currentLoad()const
             {
@@ -177,6 +211,7 @@ namespace lcz_rpc
             std::mutex _methods_mutex;//方法互斥锁
             std::vector<std::string> _registered_methods;//已注册的方法
             std::atomic<bool> _report_started{false};//上报负载的线程是否启动
+            std::thread _server_thread;//服务器运行线程（用于非阻塞启动）
         };
         //主题服务器
         class TopicServer

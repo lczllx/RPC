@@ -48,7 +48,8 @@ enum class RespCode {
     SERVICE_NOT_FOUND,          // 没有找到对应的服务
     INVALID_OPTYPE,             // 无效的操作类型
     TOPIC_NOT_FOUND,            // 没有找到对应的主题
-    INTERNAL_ERROR              // 内部错误
+    INTERNAL_ERROR,             // 内部错误
+    TIMEOUT                     // 请求超时
 };
 //错误原因
 static std::string errReason(RespCode code) {
@@ -62,7 +63,8 @@ static std::string errReason(RespCode code) {
         {RespCode::SERVICE_NOT_FOUND, "没有找到对应的服务!"},
         {RespCode::INVALID_OPTYPE, "无效的操作类型"},
         {RespCode::TOPIC_NOT_FOUND, "没有找到对应的主题!"},
-        {RespCode::INTERNAL_ERROR, "内部错误!"}
+        {RespCode::INTERNAL_ERROR, "内部错误!"},
+        {RespCode::TIMEOUT, "请求超时!"}
     };
     auto it = err_map.find(code);
     if (it == err_map.end()) {return "未知错误！";}
