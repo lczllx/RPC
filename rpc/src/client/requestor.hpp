@@ -58,15 +58,11 @@ namespace lcz_rpc
                         return;
                     }
                     
-                    // 取消定时器（如果存在）
-                    if(req_desc->timer_id != muduo::net::TimerId())
+                    // 取消定时器（无效 TimerId 时 cancel 为 no-op）
+                    auto* muduo_conn = dynamic_cast<MuduoConnection*>(conn.get());
+                    if(muduo_conn && muduo_conn->getLoop())
                     {
-                        // 获取 EventLoop 并取消定时器
-                        auto* muduo_conn = dynamic_cast<MuduoConnection*>(conn.get());
-                        if(muduo_conn && muduo_conn->getLoop())
-                        {
-                            muduo_conn->getLoop()->cancel(req_desc->timer_id);
-                        }
+                        muduo_conn->getLoop()->cancel(req_desc->timer_id);
                     }
                 }
                 
@@ -148,17 +144,19 @@ namespace lcz_rpc
                 {
                     double timeout_sec = timeout.count() / 1000.0;
                     std::string req_id = req->rid();
-                    req_desc->timer_id = muduo_conn->getLoop()->runAfter(timeout_sec, 
-                        [this, req_id]() {
-                            this->onTimeout(req_id);
-                        });
+                    muduo::net::TimerId tid = muduo_conn->getLoop()->runAfter(timeout_sec,
+                        [this, req_id]() { this->onTimeout(req_id); });
+                    {
+                        std::unique_lock<std::mutex> lock(_mutex);
+                        req_desc->timer_id = tid;
+                    }
                     DLOG("设置超时定时器: id=%s, timeout=%.2fs", req_id.c_str(), timeout_sec);
                 }
                 else
                 {
                     WLOG("无法获取 EventLoop，超时机制不可用: id=%s", req->rid().c_str());
                 }
-                
+
                 conn->send(req);//异步请求发送
                 async_resp= req_desc->response.get_future();//获取关联的future对象
                 return true;
@@ -179,6 +177,14 @@ namespace lcz_rpc
                 if(async_resp.wait_for(timeout) == std::future_status::timeout)
                 {
                     ELOG("Requestor sync recv timeout id=%s", req->rid().c_str());
+                    // 先尝试取消 muduo 定时器，避免之后在 loop 里再触发一次 onTimeout
+                    ReqDescribe::ptr desc = getDesc(req->rid());
+                    if(desc)
+                    {
+                        auto* mc = dynamic_cast<MuduoConnection*>(conn.get());
+                        if(mc && mc->getLoop())
+                            mc->getLoop()->cancel(desc->timer_id);
+                    }
                     onTimeout(req->rid());  // 触发超时处理
                     return false;
                 }
@@ -221,7 +227,7 @@ namespace lcz_rpc
                 }
                 return  ReqDescribe::ptr();               
             }
-            void delDesc(std::string& rid)
+            void delDesc(const std::string& rid)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
                 delDescUnlocked(rid);

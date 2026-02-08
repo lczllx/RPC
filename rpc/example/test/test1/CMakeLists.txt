@@ -7,3 +7,8 @@ target_link_libraries(test1_rpc_server PRIVATE lcz_rpc)
 add_executable(test1_rpc_client rpc_client.cc)
 target_link_libraries(test1_rpc_client PRIVATE lcz_rpc)
 
+add_executable(test1_slow_rpc_server slow_rpc_server.cc)
+target_link_libraries(test1_slow_rpc_server PRIVATE lcz_rpc)
+
+add_executable(test1_timeout_test_client timeout_test_client.cc)
+target_link_libraries(test1_timeout_test_client PRIVATE lcz_rpc)

@@ -32,6 +32,39 @@ check_command() {
     fi
 }
 
+# 尝试安装系统依赖（无则安装）
+# 用法: try_install_pkg "检测命令或条件" "apt包名" "yum/dnf包名"
+try_install_pkg() {
+    local check="$1"
+    local pkg_apt="$2"
+    local pkg_yum="$3"
+    if eval "$check" 2>/dev/null; then
+        return 0
+    fi
+    print_warn "未检测到依赖，尝试自动安装..."
+    if command -v apt-get &>/dev/null; then
+        sudo -n apt-get update -qq 2>/dev/null || true
+        if sudo apt-get install -y "$pkg_apt"; then
+            print_info "已安装 $pkg_apt ✓"
+            return 0
+        fi
+    elif command -v dnf &>/dev/null; then
+        if sudo dnf install -y "$pkg_yum"; then
+            print_info "已安装 $pkg_yum ✓"
+            return 0
+        fi
+    elif command -v yum &>/dev/null; then
+        if sudo yum install -y "$pkg_yum"; then
+            print_info "已安装 $pkg_yum ✓"
+            return 0
+        fi
+    fi
+    print_error "自动安装失败。请手动安装："
+    echo "  Ubuntu/Debian: sudo apt-get install $pkg_apt"
+    echo "  CentOS/RHEL:   sudo yum install $pkg_yum"
+    exit 1
+}
+
 # 获取脚本所在目录（根目录的autobuild），然后切换到rpc目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -63,29 +96,16 @@ print_info "CMake 版本: $CMAKE_VERSION ✓"
 GXX_VERSION=$(g++ --version | head -n1 | cut -d' ' -f4)
 print_info "g++ 版本: $GXX_VERSION ✓"
 
-# 2. 检查并安装系统依赖（可选）
+# 2. 检查并安装系统依赖（没有则自动安装）
 print_info "检查系统依赖..."
 
-# 检查Boost（muduo需要）
-if ! pkg-config --exists boost 2>/dev/null && ! ldconfig -p | grep -q libboost_system; then
-    print_warn "未检测到 Boost 库，muduo 需要 Boost"
-    print_warn "Ubuntu/Debian: sudo apt-get install libboost-dev"
-    print_warn "CentOS/RHEL: sudo yum install boost-devel"
-    read -p "是否继续构建？(y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-else
-    print_info "Boost 库已安装 ✓"
-fi
+# Boost（muduo 需要）
+try_install_pkg "pkg-config --exists boost 2>/dev/null || ldconfig -p | grep -q libboost_system" "libboost-dev" "boost-devel"
+print_info "Boost 库已就绪 ✓"
 
-# 检查jsoncpp（可选，CMake会自动下载）
-if pkg-config --exists jsoncpp 2>/dev/null || ldconfig -p | grep -q libjsoncpp; then
-    print_info "检测到系统安装的 jsoncpp，将优先使用"
-else
-    print_info "未检测到系统 jsoncpp，CMake 将自动下载"
-fi
+# jsoncpp（需有头文件或 pkg-config，仅运行时库不够）
+try_install_pkg "pkg-config --exists jsoncpp 2>/dev/null || test -f /usr/include/jsoncpp/json/json.h" "libjsoncpp-dev" "jsoncpp-devel"
+print_info "jsoncpp 已就绪 ✓"
 
 # 3. 初始化并更新git子模块（muduo）
 print_info "初始化 git 子模块（muduo）..."
@@ -95,8 +115,8 @@ if [ ! -d "muduo" ] || [ -z "$(ls -A muduo 2>/dev/null)" ]; then
     print_info "muduo 目录为空，初始化子模块..."
     git submodule update --init --recursive
 else
-    print_info "muduo 目录已存在，更新子模块..."
-    git submodule update --recursive --remote 2>/dev/null || git submodule update --recursive
+    print_info "muduo 目录已存在，同步父项目记录的提交（不拉远程）..."
+    git submodule update --recursive
 fi
 
 if [ ! -d "muduo" ] || [ -z "$(ls -A muduo 2>/dev/null)" ]; then
