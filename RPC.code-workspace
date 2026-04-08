@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": ".",
+			"name": "RPC"
+		}
+	],
+	"settings": {
+		"markdown.preview.security": "insecure"
+	}
+}
