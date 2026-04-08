@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package lcz_rpc.proto;
+
+// -------- RPC（路径二）--------
+message RpcRequestEnvelope {
+  string method = 1;
+  bytes  body   = 2;
+}
+message RpcResponseEnvelope {
+  int32 rcode = 1;
+  bytes body  = 2;
+}
+
+// -------- Topic 请求/响应（与 JSON TopicRequest/TopicResponse 字段对应）--------
+message TopicRequestEnvelope {
+  string method           = 1;
+  string topic_key        = 2;
+  int32  optype           = 3;   // TopicOpType
+  string topic_msg        = 4;
+  int32  forward_strategy = 5;   // TopicForwardStrategy, default BROADCAST
+  int32  fanout           = 6;
+  string shard_key        = 7;
+  int32  priority         = 8;
+  repeated string tags    = 9;
+  int32  redundant        = 10;
+}
+message TopicResponseEnvelope {
+  int32  rcode  = 1;
+  bytes  result = 2;
+}
+
+// -------- Service 请求/响应（与 JSON ServiceRequest/ServiceResponse 字段对应）--------
+message HostEntry {
+  string ip   = 1;
+  int32  port = 2;
+  int32  load = 3;
+}
+message ServiceRequestEnvelope {
+  string method    = 1;
+  int32  optype    = 2;   // ServiceOpType
+  string host_ip   = 3;
+  int32  host_port = 4;
+  int32  load      = 5;
+}
+message ServiceResponseEnvelope {
+  int32  rcode = 1;
+  int32  optype = 2;
+  string method = 3;
+  repeated HostEntry host = 4;
+}
+
+// -------- Benchmark 性能测试用（add / echo / heavy_compute）--------
+message AddRequest {
+  int32 num1 = 1;
+  int32 num2 = 2;
+}
+message AddResponse {
+  int32 result = 1;
+}
+message EchoRequest {
+  string data = 1;
+}
+message EchoResponse {
+  string data = 1;
+}
+message HeavyRequest {
+  int32 value = 1;
+}
+message HeavyResponse {
+  int32 result = 1;
+}

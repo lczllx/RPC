@@ -11,14 +11,14 @@ namespace lcz_rpc
 {
     namespace client
     {
-        //在client命名空间定义的HostDetail结构体，用于存储主机信息和负载信息
-      //搬去了general/publicconfig.hpp中
+        // 方法主机类：维护某 method 的主机列表，支持多种负载均衡策略选择主机
         class MethodHost
         {
         public:
             using ptr = std::shared_ptr<MethodHost>;
             MethodHost(const std::vector<HostDetail>& host) : _idx(0),_host(host),_rng(std::random_device()()),_hash() {}
             MethodHost() : _idx(0),_rng(std::random_device()()/*使用随机数生成器生成种子*/),_hash() {}
+            // 添加或更新主机（同 host 则更新负载）
             void appendHost(const HostInfo &host,int load)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -31,7 +31,7 @@ namespace lcz_rpc
                 }
                 _host.emplace_back(HostDetail{host,load});
             }
-            //根据负载均衡策略选择主机
+            // 按指定策略从主机列表中选一个
             HostDetail selectHost(LoadBalanceStrategy strategy, const std::string &key = {})
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -49,7 +49,7 @@ namespace lcz_rpc
                 }
                 return HostDetail();//如果策略不合法，则返回空
             }
-            //轮询算法选择主机
+            // 轮询选择
             HostDetail pickRoundRobin() 
             {
                 if(_host.empty()) return HostDetail();
@@ -57,7 +57,7 @@ namespace lcz_rpc
                 if (_idx >= MAX_IDX) _idx%=_host.size();//防止索引溢出
                 return _host[pos];
             }
-            //随机算法选择主机
+            // 随机选择
             HostDetail pickRandom() 
             {
                 if (_host.empty()) return HostDetail();
@@ -65,7 +65,7 @@ namespace lcz_rpc
                 auto pos = dist(_rng);
                 return _host[pos];
             }
-            //源地址hash算法选择主机
+            // 按 key 哈希固定选同一主机
             HostDetail pickSourceHash(const std::string &key) {
                 if(key.empty())return pickRandom();//如果key为空，则随机选择主机
                 if(_host.empty())return HostDetail();
@@ -73,7 +73,7 @@ namespace lcz_rpc
                 size_t pos=hash_val%_host.size();
                 return _host[pos];
             }
-            //最低负载算法选择主机
+            // 选负载最低的主机（同负载则轮询）
             HostDetail pickLowestLoad() {
                 if(_host.empty())return HostDetail();
                 //负载最优+轮询分配
@@ -102,7 +102,7 @@ namespace lcz_rpc
                 auto pos=candidates[cur_pos%candidates.size()];
                 return _host[pos];
             }
-            //通过find_if+lambda判断是否存在，存在则删除
+            // 移除指定主机
             void removeHost(const HostInfo &host)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -117,14 +117,17 @@ namespace lcz_rpc
                     _host.erase(it);
                 }
             }
+            // 默认轮询获取一个主机
             HostInfo getHost()
             {
                 return selectHost(LoadBalanceStrategy::ROUND_ROBIN).host;
             }
+            // 默认轮询获取主机详情
             HostDetail getHostDetail()
             {
                 return selectHost(LoadBalanceStrategy::ROUND_ROBIN);
             }
+            // 判断主机列表是否为空
             bool empty()
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -139,12 +142,13 @@ namespace lcz_rpc
             std::hash<std::string> _hash;//hash函数
             //std::uniform_int_distribution<size_t> _dist;//随机数分布
         };
+        // 提供者代理类：封装向注册中心注册/上报负载/发送心跳的请求
         class Provider
         {
         public:
             using ptr = std::shared_ptr<Provider>;
             Provider(const Requestor::ptr &requestor) : _requestor(requestor) {}
-            //注册服务
+            // 向注册中心注册服务
             bool methodRegistry(const BaseConnection::ptr &conn, const std::string &method, const HostInfo &host,int load)
             {
                 auto msg_req = MessageFactory::create<ServiceRequest>();
@@ -177,6 +181,7 @@ namespace lcz_rpc
                
                 return true;
             }
+            // 向注册中心上报负载
             bool reportLoad(const BaseConnection::ptr &conn,const std::string &method,const HostInfo &host,int load)
             {
                 auto msg_req = MessageFactory::create<ServiceRequest>();
@@ -209,7 +214,7 @@ namespace lcz_rpc
                 return true;
 
             }
-            //客户端向服务端发送心跳 （提供者的心跳）
+            // 向注册中心发送提供者心跳
             bool heartbeatProvider(const BaseConnection::ptr &conn,
                 const std::string &method, const HostInfo &host)
             {
@@ -235,12 +240,14 @@ namespace lcz_rpc
         private:
             Requestor::ptr _requestor;
         };
+        // 服务发现类：请求注册中心获取主机列表，缓存并按策略选主机，处理上线/下线
         class Discover
         {
         public:
             using ptr = std::shared_ptr<Discover>;
             using OfflineCallback=std::function<void(const HostInfo&)>;
             Discover(const Requestor::ptr &requestor,const OfflineCallback& cb) : _requestor(requestor),_offline_cb(cb) {}
+            // 处理上线/下线通知，更新 _method_host 缓存
             void onserviceRequest(const BaseConnection::ptr &conn,const ServiceRequest::ptr &req)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -281,6 +288,7 @@ namespace lcz_rpc
                     return;
                 }
             }
+            // 发现服务：先查缓存，无则请求注册中心，按 strategy 选主机
             bool serviceDiscover(const BaseConnection::ptr &conn,
                                  const std::string &method,
                                  HostDetail &detail,

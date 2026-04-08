@@ -9,14 +9,18 @@ namespace lcz_rpc
 {
     namespace client
     {
+        // 主题管理类（客户端）：封装主题的创建/删除/订阅/发布请求，管理订阅回调
         class TopicManager
         {
         public:
             using SubCallback = std::function<void(const std::string &, const std::string &)>;//消息推送调用的回调
             using ptr = std::shared_ptr<TopicManager>;
             TopicManager(const Requestor::ptr &requestor) : _requestor(requestor) {}
+            // 创建主题
             bool createTopic(const BaseConnection::ptr &conn, const std::string &topic_name) { return commonRequest(conn, topic_name, TopicOpType::CREATE); }
+            // 删除主题
             bool removeTopic(const BaseConnection::ptr &conn, const std::string &topic_name) { return commonRequest(conn, topic_name, TopicOpType::REMOVE); }
+            // 订阅主题，收到推送时调用 cb
             bool subscribeTopic(const BaseConnection::ptr &conn, const std::string &topic_name, const SubCallback &cb,int priority=0,const std::vector<std::string> &tags={})
             {
                 addSubscribe(topic_name,cb);
@@ -27,11 +31,14 @@ namespace lcz_rpc
                 }
                 return true;
             }
+            // 取消订阅
             bool cancelTopic(const BaseConnection::ptr &conn, const std::string &topic_name){return commonRequest(conn,topic_name,TopicOpType::UNSUBSCRIBE); }
+            // 向主题发布消息
             bool publishTopic(const BaseConnection::ptr &conn, const std::string &topic_name, const std::string &msg,
             TopicForwardStrategy strategy=TopicForwardStrategy::BROADCAST,int fanoutLimit=0,const std::string &shardKey="",
             int priority=0,const std::vector<std::string> &tags={}/*这样设置避免可能的悬挂引用*/,int redundantCount=0){       
                 return commonRequest(conn,topic_name,TopicOpType::PUBLISH,msg,strategy,fanoutLimit,shardKey,priority,tags,redundantCount);}
+            // 收到服务端推送时，根据 topic 查找回调并调用
             void onTopicPublish(const BaseConnection::ptr &conn, const TopicRequest::ptr &msg)
             {
                 auto type=msg->optype();
@@ -52,17 +59,19 @@ namespace lcz_rpc
             }
 
         private:
-            // 回调映射操作都需要持锁，防止并发订阅
+            // 添加主题与回调的映射
             void addSubscribe(const std::string &topic_name, const SubCallback &cb)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
                 _topic_cb[topic_name] = cb;
             }
+            // 移除主题回调
             void delSubscribe(const std::string &topic_name)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
                 _topic_cb.erase(topic_name);
             }
+            // 根据主题获取订阅回调
             const SubCallback getSubscribe(const std::string &topic_name)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -71,7 +80,7 @@ namespace lcz_rpc
                     return it->second;
                 return SubCallback();
             }
-            // 发送 TopicRequest 并同步等待 TopicResponse
+            // 构造并发送 TopicRequest，同步等待 TopicResponse
             bool commonRequest(const BaseConnection::ptr &conn, const std::string &topic_name, TopicOpType op_type, const std::string &msg = "",
             TopicForwardStrategy strategy=TopicForwardStrategy::BROADCAST,int fanoutLimit=0,const std::string &shardKey="",
             int priority=0,const std::vector<std::string> &tags={},int redundantCount=0)

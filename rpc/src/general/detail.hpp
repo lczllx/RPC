@@ -33,10 +33,10 @@
 #define WLOG(format,...)LOG(LWARN,format,##__VA_ARGS__);
 #define ELOG(format,...)LOG(LERR,format,##__VA_ARGS__);
 
-// Jsoncpp 的薄封装，便于序列化/反序列化
+// JSON 工具类：Jsoncpp 的薄封装，用于 Json 与字符串的序列化/反序列化
 class JSON{
     public:
-    //json对象->字符串 data-要序列化的jason对象 output序列化后的字符串
+    //json对象->字符串 data-要序列化的json对象 output-序列化后的字符串
     static bool serialize(const Json::Value &data,std::string &output)
     {
         Json::StreamWriterBuilder swb;
@@ -52,7 +52,7 @@ class JSON{
         return true;
 
     }
-    //字符串->json对象 data-反序列化后的jason对象 input需要反序列化的字符串
+    //字符串->json对象 data-反序列化后的json对象 input需要反序列化的字符串
     static bool deserialize(const std::string &input, Json::Value &data)
     {
         Json::CharReaderBuilder crb;

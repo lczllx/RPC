@@ -3,6 +3,7 @@
 #include "../general/message.hpp"
 #include "../general/dispacher.hpp"
 #include "../general/publicconfig.hpp"
+#include <google/protobuf/message_lite.h>
 
 /*服务端对rpc请求的处理
 1. 接收RPC请求 → 2. 根据method名查找服务 → 3. 参数校验
@@ -21,8 +22,7 @@ namespace lcz_rpc{
             NULL_TYPE       // 6: 空值
             
         };
-        //服务描述类
-        // 描述单个 RPC 方法：校验参数、执行回调、校验返回值
+        // 服务描述类：描述单个 RPC 方法，负责参数校验、执行回调、返回值校验
         class ServiceDescribe
         {
             public:
@@ -32,6 +32,7 @@ namespace lcz_rpc{
             ServiceDescribe(std::string&& method_name,ServiceCallback&& cb, std::vector<ParamsDescribe>&& params_desc,ValType return_type)
             :_method_name(std::move(method_name)),_service_cb(std::move(cb)),_params_desc(std::move(params_desc)),_return_type(return_type){}
             
+            // 校验 params 中各字段类型是否符合 _params_desc
             bool checkParams(const Json::Value& params)
             {
                 for(auto& desc:_params_desc)
@@ -49,6 +50,7 @@ namespace lcz_rpc{
                 }
                 return true;
             }
+            // 调用服务回调并校验返回值类型
             bool call(const Json::Value& param,Json::Value& result)
             {
                 _service_cb(param,result);
@@ -85,16 +87,17 @@ namespace lcz_rpc{
             std::vector<ParamsDescribe> _params_desc;
             ValType _return_type;
         };
-        //建造者模式
+        // 服务工厂类：建造者模式，用于构造 ServiceDescribe
         class ServiceFactory
         {
             public:
             void setReturntype(ValType rtype){_return_type=rtype;}
             void setMethodName(const std::string& method_name){_method_name=method_name;}
+            // 添加参数描述 (参数名, 类型)
             void setParamdescribe(const std::string& param_name,ValType vtype){_params_desc.emplace_back(param_name,vtype);}
             void setServiceCallback(const ServiceDescribe::ServiceCallback& cb){_service_cb=cb;}
             
-            // ServiceDescribe::ptr build(){return std::make_shared<ServiceDescribe>(std::move(_method_name),std::move(_service_cb),std::move(_params_desc),_return_type);}
+            // 根据已设置的参数构造 ServiceDescribe
             ServiceDescribe::ptr build()
             {
                 std::string method_name = _method_name;
@@ -115,14 +118,15 @@ namespace lcz_rpc{
             ValType _return_type;
 
         };
-        //服务管理类
-        // 简单的线程安全注册表（method -> ServiceDescribe）
+        // 服务管理类：线程安全的 method->ServiceDescribe 注册表
         class ServiceManager
         {
             public:
             using ptr=std::shared_ptr<ServiceManager>;
+            // 注册服务描述
             void add(const ServiceDescribe::ptr& service){std::unique_lock<std::mutex> lock(_mutex);_services[service->getMethodname()]=service;}
             
+            // 根据方法名查找服务
             ServiceDescribe::ptr select(const std::string& methodname)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -133,6 +137,7 @@ namespace lcz_rpc{
                 }
                 return nullptr;
             }
+            // 移除已注册的服务
             bool remove(const std::string& methodname)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -149,14 +154,13 @@ namespace lcz_rpc{
             std::mutex _mutex;
             std::unordered_map<std::string,ServiceDescribe::ptr> _services;
         };
-        //
-        // 核心路由器：将 RPC 请求派发到对应的 ServiceDescribe
+        // RPC 路由器类：接收 RPC 请求，派发到对应的 ServiceDescribe 处理
         class RpcRouter
         {
             public:
             using ptr=std::shared_ptr<RpcRouter>;
             RpcRouter() : _manager(std::make_shared<ServiceManager>()) {}
-            //注册到dispacher模块对rpc请求进行回调处理的业务函数
+            // 处理 RPC 请求：查找服务、校验参数、调用回调、返回响应
             void onrpcRequst(const BaseConnection::ptr& conn,RpcRequest::ptr& req)
             {
                 DLOG("RpcRouter recv method=%s", req->method().c_str());
@@ -181,8 +185,9 @@ namespace lcz_rpc{
                 DLOG("RpcRouter respond method=%s", req->method().c_str());
                 return response(conn,req,result,RespCode::SUCCESS);
             }
-            //提供给用户注册服务
+            // 向路由器注册 RPC 方法
             void registerMethod(const ServiceDescribe::ptr& service){_manager->add(service);}
+            // 构造 RpcResponse 并发送
             void response(const BaseConnection::ptr& conn,const RpcRequest::ptr& req,const Json::Value& result,RespCode rcode)
             {
                 auto resp=MessageFactory::create<RpcResponse>();
@@ -194,6 +199,76 @@ namespace lcz_rpc{
             }
             private:
             ServiceManager::ptr _manager;
+        };
+
+        // 路径二：纯 Proto RPC 路由器，按 method 派发到类型化 handler(conn, Req, Resp*)
+        class ProtoRpcRouter
+        {
+        public:
+            using ptr = std::shared_ptr<ProtoRpcRouter>;
+            // 收到 Proto RPC 请求时调用：根据 method 查找并执行已注册的 proto handler
+            void onProtoRequest(const BaseConnection::ptr& conn, ProtoRpcRequest::ptr& req)
+            {
+                const std::string& method = req->method();
+                const std::string& body = req->body();
+                const std::string& req_id = req->rid();
+                DLOG("ProtoRpcRouter recv method=%s", method.c_str());
+                auto it = _handlers.find(method);
+                if (it == _handlers.end()) {
+                    ELOG("Proto method not found: %s", method.c_str());
+                    sendProtoResponse(conn, req_id, RespCode::SERVICE_NOT_FOUND, "");
+                    return;
+                }
+                it->second(conn, body, req_id);
+            }
+            // 注册纯 Proto 方法：handler(conn, const Req&, Resp*)，热路径零 JSON
+            template<typename Req, typename Resp>
+            void registerProtoHandler(const std::string& method,
+                std::function<void(const BaseConnection::ptr&, const Req&, Resp*)> handler)
+            {
+                std::string method_copy = method;
+                _handlers[method] = [handler, method_copy](const BaseConnection::ptr& conn,
+                    const std::string& body, const std::string& req_id) {
+                    Req req;
+                    if (!req.ParseFromString(body)) {
+                        ELOG("ProtoRpcRouter: ParseFromString failed method=%s", method_copy.c_str());
+                        sendProtoResponse(conn, req_id, RespCode::PARSE_FAILED, "");
+                        return;
+                    }
+                    Resp resp;
+                    try {
+                        handler(conn, req, &resp);
+                    } catch (const std::exception& e) {
+                        ELOG("ProtoRpcRouter handler exception method=%s: %s", method_copy.c_str(), e.what());
+                        sendProtoResponse(conn, req_id, RespCode::INTERNAL_ERROR, "");
+                        return;
+                    } catch (...) {
+                        ELOG("ProtoRpcRouter handler unknown exception method=%s", method_copy.c_str());
+                        sendProtoResponse(conn, req_id, RespCode::INTERNAL_ERROR, "");
+                        return;
+                    }
+                    std::string resp_body;
+                    if (!resp.SerializeToString(&resp_body)) {
+                        ELOG("ProtoRpcRouter: SerializeToString failed");
+                        sendProtoResponse(conn, req_id, RespCode::INTERNAL_ERROR, "");
+                        return;
+                    }
+                    sendProtoResponse(conn, req_id, RespCode::SUCCESS, resp_body);
+                };
+            }
+            static void sendProtoResponse(const BaseConnection::ptr& conn, const std::string& req_id,
+                RespCode rcode, const std::string& body)
+            {
+                auto resp = MessageFactory::create<ProtoRpcResponse>();
+                resp->setId(req_id);
+                resp->setMsgType(MsgType::RSP_RPC_PROTO);
+                resp->setRcode(rcode);
+                resp->setBody(body);
+                conn->send(resp);
+            }
+        private:
+            using HandlerFn = std::function<void(const BaseConnection::ptr&, const std::string& body, const std::string& req_id)>;
+            std::unordered_map<std::string, HandlerFn> _handlers;
         };
     }
 }

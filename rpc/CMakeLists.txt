@@ -46,6 +46,18 @@ else()
     endif()
 endif()
 
+# Protobuf（路径二：纯 Proto RPC）
+find_package(Protobuf REQUIRED)
+set(LCZ_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/proto/rpc_envelope.proto")
+set(LCZ_PROTOBUF_IMPORT_DIRS ${CMAKE_CURRENT_SOURCE_DIR})
+protobuf_generate_cpp(LCZ_PROTO_SRCS LCZ_PROTO_HDRS ${LCZ_PROTO_FILE})
+add_library(lcz_rpc_proto STATIC ${LCZ_PROTO_SRCS})
+target_link_libraries(lcz_rpc_proto PUBLIC protobuf::libprotobuf)
+target_include_directories(lcz_rpc_proto PUBLIC
+  ${CMAKE_CURRENT_BINARY_DIR}
+  ${Protobuf_INCLUDE_DIRS}
+)
+
 set(MUDUO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory(muduo)
 

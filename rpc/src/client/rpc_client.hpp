@@ -12,6 +12,7 @@ namespace lcz_rpc
     
     namespace client
     {
+        // 注册中心客户端类：服务提供者用，向注册中心注册/上报负载/发送心跳
         class ClientRegistry
         {
         public:
@@ -23,6 +24,7 @@ namespace lcz_rpc
 
                 auto msg_cb = std::bind(&Dispacher::onMessage, _dispacher.get(), std::placeholders::_1, std::placeholders::_2);
                 _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC, resp_cb);
+                _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC_PROTO, resp_cb);
                 _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_SERVICE, resp_cb);
                 //注册REQ_SERVICE消息处理回调（注册中心可能发送上线/下线通知，虽然提供者通常不需要处理，但需要注册以避免报错）
                 _dispacher->registerhandler<ServiceRequest>(lcz_rpc::MsgType::REQ_SERVICE,
@@ -34,6 +36,7 @@ namespace lcz_rpc
                 _client->setMessageCallback(msg_cb);
                 _client->connect();
             }
+            // 向注册中心注册服务方法
             bool methodRegistry(const std::string &method, const HostInfo &host,int load)
             {
                 auto conn = _client->connection();
@@ -44,7 +47,7 @@ namespace lcz_rpc
                 }
                 return _provider->methodRegistry(conn, method, host, load);
             }
-            //给外部提供上报负载的接口
+            // 向注册中心上报负载
             bool reportLoad(const std::string &method, const HostInfo &host,int load)
             {
                 auto conn = _client->connection();
@@ -55,7 +58,7 @@ namespace lcz_rpc
                 }
                 return _provider->reportLoad(conn, method, host, load);
             }
-            //客户端向服务端发送心跳（提供者的心跳）RpcServer::heartbeatTick调用
+            // 向注册中心发送提供者心跳
             bool heartbeatProvider(const std::string &method, const HostInfo &host)
             {
                 auto conn = _client->connection();
@@ -74,6 +77,7 @@ namespace lcz_rpc
             Dispacher::ptr _dispacher;
 
         };
+        // 服务发现客户端类：向注册中心发现服务，维护主机缓存，支持健康检查
         class ClientDiscover
         {
         public:
@@ -91,6 +95,7 @@ namespace lcz_rpc
                 auto req_cb = std::bind(&client::Discover::onserviceRequest, _discover.get(), std::placeholders::_1, std::placeholders::_2);
                 auto msg_cb = std::bind(&Dispacher::onMessage, _dispacher.get(), std::placeholders::_1, std::placeholders::_2);
                 _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC, resp_cb);
+                _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC_PROTO, resp_cb);
                 _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_SERVICE, resp_cb);
                 _dispacher->registerhandler<ServiceRequest>(lcz_rpc::MsgType::REQ_SERVICE, req_cb);
                 _client = lcz_rpc::ClientFactory::create(ip, port);
@@ -124,7 +129,8 @@ namespace lcz_rpc
                 });
             }
 
-            bool serviceDiscover(const std::string &method, HostDetail &detail_bylast/*上一个serviceDiscover传入的detail*/,LoadBalanceStrategy strategy) {
+            // 发现服务，返回主机详情（支持负载均衡），结果写入 detail_bylast
+            bool serviceDiscover(const std::string &method, HostDetail &detail_bylast,LoadBalanceStrategy strategy) {
                 HostDetail detail;
                 auto conn = _client->connection();
                 if(conn.get() == nullptr || conn->connected() == false)
@@ -143,6 +149,7 @@ namespace lcz_rpc
                 }
                 return false;  // 别忘记有返回
             }
+            // 发现服务，返回主机信息（支持负载均衡）
             bool serviceDiscover(const std::string &method, HostInfo &host,LoadBalanceStrategy strategy) {
                 HostDetail detail;
                 auto conn = _client->connection();
@@ -174,6 +181,7 @@ namespace lcz_rpc
             muduo::net::EventLoop* _health_loop_ptr = nullptr;//健康检查线程指针
         };
 
+        // RPC 客户端类：支持直连或服务发现，提供同步/异步/回调三种 RPC 调用
         class RpcClient
         {
         public:
@@ -188,8 +196,8 @@ namespace lcz_rpc
                   _loadbalance_strategy(LoadBalanceStrategy::ROUND_ROBIN)
             {
                 auto resp_cb = std::bind(&client::Requestor::onResponse, _requestor.get(), std::placeholders::_1, std::placeholders::_2);
-                _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC, resp_cb); // 设置resp回调响应处理
-                   
+                _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC, resp_cb);
+                _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC_PROTO, resp_cb);
                 if (_enablediscover)
                 {
                     auto offlinecb = std::bind(&RpcClient::delClient, this, std::placeholders::_1);
@@ -204,10 +212,12 @@ namespace lcz_rpc
                 }
 
             }
+            // 设置负载均衡策略
             void setloadbalanceStrategy(LoadBalanceStrategy strategy)
             {
                 _loadbalance_strategy = strategy;
             }
+            // 同步 RPC 调用
             bool call(const std::string &method_name, const Json::Value &params, Json::Value &result)
             {
                 BaseClient::ptr client = getClient(method_name);
@@ -218,6 +228,7 @@ namespace lcz_rpc
                 }
                 return _caller->call(client->connection(), method_name, params, result);
             }
+            // 异步 RPC 调用，通过 future 获取结果
             bool call(const std::string &method_name, Json::Value &params, RpcCaller::RpcAsyncRespose &result)
             {
                 BaseClient::ptr client = getClient(method_name);
@@ -228,6 +239,7 @@ namespace lcz_rpc
                 }
                 return _caller->call(client->connection(), method_name, params, result);
             }
+            // 回调式 RPC 调用
             bool call(const std::string &method_name, Json::Value &params, const RpcCaller::ResponseCallback &cb)
             {
                 BaseClient::ptr client = getClient(method_name);
@@ -238,13 +250,28 @@ namespace lcz_rpc
                 }
                 return _caller->call(client->connection(), method_name, params, cb);
             }
+            // 纯 Proto RPC 调用（默认序列化方式为 protobuf 时使用）
+            template<typename Req, typename Resp>
+            bool call_proto(const std::string &method_name, const Req &req, Resp *resp,
+                           std::chrono::milliseconds timeout = std::chrono::seconds(5))
+            {
+                BaseClient::ptr client = getClient(method_name);
+                if (client.get() == nullptr)
+                {
+                    ELOG("服务获取失败：%s", method_name.c_str());
+                    return false;
+                }
+                return _caller->call_proto(client->connection(), method_name, req, resp, timeout);
+            }
 
         private:
+            // 收到下线通知时从连接池移除该 host
             void delClient(const HostInfo &host)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
                 _rpc_clients.erase(host);
             }
+            // 创建新连接并加入连接池
             BaseClient::ptr newClient(const HostInfo &host)
             {
                 BaseClient::ptr client;
@@ -256,6 +283,7 @@ namespace lcz_rpc
                 putClient(host, client);
                 return client;
             }
+            // 根据 method 获取或创建对应的 RPC 客户端（支持服务发现）
             BaseClient::ptr getClient(const std::string &method)
             {
                 BaseClient::ptr client;
@@ -283,6 +311,7 @@ namespace lcz_rpc
                 }
                 return client;
             }
+            // 从连接池获取或创建该 host 的客户端
             BaseClient::ptr getClient(const HostInfo &host)
             {
                 {
@@ -295,6 +324,7 @@ namespace lcz_rpc
                 }
                 return newClient(host);
             }
+            // 将客户端加入连接池
             void putClient(const HostInfo &host, BaseClient::ptr &client)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -302,6 +332,7 @@ namespace lcz_rpc
             }
 
         private:
+            // HostInfo 的哈希仿函数，用于 unordered_map
             struct HostHash
             {
                 size_t operator()(const HostInfo &host)const
@@ -320,7 +351,7 @@ namespace lcz_rpc
             Dispacher::ptr _dispacher;
             LoadBalanceStrategy _loadbalance_strategy;//负载均衡策略
         };
-        // 轻量级主题客户端：复用 Requestor 发送 TopicRequest，并对推送消息进行分发
+        // 主题客户端类：复用 Requestor 发送 TopicRequest，接收推送并分发到订阅回调
         class TopicClient
         {
             public:
@@ -340,8 +371,11 @@ namespace lcz_rpc
                 _topic_client->connect();
             }
             // 下面几个封装函数都直接复用 TopicManager，同步等待服务端确认
+            // 创建主题
             bool createTopic(const std::string &topic_name) {return _topicmanager->createTopic(_topic_client->connection(),topic_name);}
+            // 删除主题
             bool removeTopic( const std::string &topic_name) {return _topicmanager->removeTopic(_topic_client->connection(),topic_name);}
+            // 订阅主题，收到推送时调用 cb
             bool subscribeTopic(const std::string &topic_name,
                                 const TopicManager::SubCallback &cb,
                                 int priority = 0,
@@ -353,7 +387,9 @@ namespace lcz_rpc
                                                      priority,
                                                      tags);
             }
+            // 取消订阅
             bool cancelTopic( const std::string &topic_name){return _topicmanager->cancelTopic(_topic_client->connection(),topic_name);}
+            // 向主题发布消息
             bool publishTopic(const std::string &topic_name,
                               const std::string &msg,
                               TopicForwardStrategy strategy = TopicForwardStrategy::BROADCAST,
@@ -373,6 +409,7 @@ namespace lcz_rpc
                                                    tags,
                                                    redundantCount);
             }
+            // 关闭主题客户端连接
             void shutdown(){_topic_client->shutdown();}
             private:
             Requestor::ptr _requestor;

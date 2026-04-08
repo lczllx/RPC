@@ -20,13 +20,14 @@ namespace lcz_rpc
 {
     namespace client
     {
+        // 请求管理器类：管理 RPC 请求的发送、响应匹配、超时处理
         class Requestor
         {
             public:
             using ptr=std::shared_ptr<Requestor>;
             using ReqCallback=std::function<void(const BaseMessage::ptr&)>;
             using AsyncResponse=std::future<BaseMessage::ptr>;
-            // 单个 RPC 请求的描述信息：记录请求类型、回调以及等待中的 promise
+            // 请求描述结构体：记录请求类型、回调、promise、超时定时器等
             struct ReqDescribe
             {
                 using ptr=std::shared_ptr<ReqDescribe>;
@@ -34,10 +35,10 @@ namespace lcz_rpc
                 ReqCallback callback;
                 std::promise<BaseMessage::ptr> response;
                 BaseMessage::ptr request;
-                muduo::net::TimerId timer_id;  // 超时定时器 ID（用于取消）
+                muduo::net::TimerId timer_id;  // 超时定时器 ID（用于取消定时器）
                 bool timeout_triggered = false;  // 是否已触发超时
             };
-            // 处理服务端响应：匹配请求 id，触发对应的 promise 或回调
+            // 处理服务端响应：根据消息 id 匹配请求，触发对应的 promise 或回调
             void onResponse(const BaseConnection::ptr& conn,BaseMessage::ptr& msg)
             {
                 std::string id=msg->rid();
@@ -80,7 +81,7 @@ namespace lcz_rpc
                 delDesc(id);//处理完删除掉这个描述信息
             }
             
-            // 超时处理回调
+            // 超时处理：请求超时后取消定时器，根据类型设置超时结果或忽略回调
             void onTimeout(const std::string& req_id)
             {
                 ReqDescribe::ptr req_desc = getDesc(req_id);
@@ -104,10 +105,19 @@ namespace lcz_rpc
                 // 根据请求类型处理超时
                 if(req_desc->reqtype == ReqType::ASYNC)
                 {
-                    // 创建一个超时响应消息
-                    auto timeout_msg = MessageFactory::create<RpcResponse>();
-                    timeout_msg->setId(req_id);
-                    timeout_msg->setRcode(RespCode::TIMEOUT);
+                    // 创建超时响应：若请求为 Proto RPC 则返回 ProtoRpcResponse，否则 RpcResponse
+                    BaseMessage::ptr timeout_msg;
+                    if (dynamic_cast<ProtoRpcRequest*>(req_desc->request.get())) {
+                        auto proto_resp = MessageFactory::create<ProtoRpcResponse>();
+                        proto_resp->setId(req_id);
+                        proto_resp->setRcode(RespCode::TIMEOUT);
+                        timeout_msg = proto_resp;
+                    } else {
+                        auto json_resp = MessageFactory::create<RpcResponse>();
+                        json_resp->setId(req_id);
+                        json_resp->setRcode(RespCode::TIMEOUT);
+                        timeout_msg = json_resp;
+                    }
                     // 注意：这里不能直接 set_value，因为 promise 可能已经被设置
                     // 更好的方式是使用 shared_future 或者检查 promise 状态
                     // 简化处理：尝试设置，如果失败说明已经收到响应
@@ -127,7 +137,7 @@ namespace lcz_rpc
                 
                 delDesc(req_id);
             }
-            //异步（带超时，默认5秒）
+            // 异步发送：创建请求描述、设置超时定时器，通过 async_resp 返回 future 供调用方等待
             bool send(const BaseConnection::ptr& conn,const BaseMessage::ptr& req,AsyncResponse& async_resp,
                      std::chrono::milliseconds timeout = std::chrono::seconds(5))
             {
@@ -161,7 +171,7 @@ namespace lcz_rpc
                 async_resp= req_desc->response.get_future();//获取关联的future对象
                 return true;
             }
-            //同步（带超时，默认5秒）
+            // 同步发送：内部调用异步 send，阻塞等待响应直到超时或收到结果
             bool send(const BaseConnection::ptr& conn,const BaseMessage::ptr& req,BaseMessage::ptr& resp,
                      std::chrono::milliseconds timeout = std::chrono::seconds(5))
             {
@@ -193,7 +203,7 @@ namespace lcz_rpc
                 DLOG("Requestor sync recv id=%s", req->rid().c_str());
                 return true;
             }
-            //回调
+            // 回调方式发送：注册回调函数，响应到达时通过 onResponse 触发 cb
             bool send(const BaseConnection::ptr& conn,const BaseMessage::ptr& req,const ReqCallback& cb)
             {
                 ReqDescribe::ptr req_desc=newDesc(req,ReqType::CALLBACK,cb);
@@ -206,6 +216,7 @@ namespace lcz_rpc
                 return true;
             }
             private:
+            // 创建并注册新的请求描述到映射表，供后续查找和响应匹配
             ReqDescribe::ptr newDesc(const BaseMessage::ptr& req,ReqType req_type,const ReqCallback& cb=ReqCallback())
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -217,6 +228,7 @@ namespace lcz_rpc
                 DLOG("newDesc add id=%s", req->rid().c_str());
                 return req_desc;
             }
+            // 根据请求 id 从映射表查找对应的请求描述
             ReqDescribe::ptr getDesc(const std::string& rid)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -227,12 +239,14 @@ namespace lcz_rpc
                 }
                 return  ReqDescribe::ptr();               
             }
+            // 删除请求描述，释放资源（加锁版本）
             void delDesc(const std::string& rid)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
                 delDescUnlocked(rid);
             }
             
+            // 删除请求描述（内部使用，调用方需已持 _mutex）
             void delDescUnlocked(const std::string& rid)
             {
                 _request_desc.erase(rid);

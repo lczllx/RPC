@@ -13,7 +13,7 @@ namespace lcz_rpc
 {
     namespace server
     {
-        // 注册中心服务端
+        // 注册中心服务端类：提供服务注册/发现/心跳扫描
         class RegistryServer
         {
         public:
@@ -41,12 +41,14 @@ namespace lcz_rpc
                     }
                 });
             }
+            // 启动注册中心服务器
             void start()
             {
                 _server->start();
             }
 
         private:
+            // 连接关闭时清理 provider/discoverer
             void onconnShoutdown(const BaseConnection::ptr &conn)
             {
                 _pdmanager->onconnShoutdown(conn);
@@ -64,23 +66,26 @@ namespace lcz_rpc
 
         };
         
-        // 不带注册中心的 RPC 服务，如果开启发现则自动向注册中心注册方法
+        // RPC 服务端类：提供 RPC 方法注册与调用，可选向注册中心注册并心跳/负载上报
         class RpcServer
         {
         public:
             using ptr = std::shared_ptr<RpcServer>;
             // 两套地址信息：1.rpc服务提供的访问地址信息2.注册中心服务端地址信息
             RpcServer(const HostInfo &access_addr, bool enablediscover = false, const HostInfo &registry_server_addr=HostInfo("",0))
-                : _access_addr(access_addr), _enablediscover(enablediscover), _dispacher(std::make_shared<Dispacher>()), _rpc_router(std::make_shared<RpcRouter>())
+                : _access_addr(access_addr), _enablediscover(enablediscover), _dispacher(std::make_shared<Dispacher>()), _rpc_router(std::make_shared<RpcRouter>()), _proto_rpc_router(std::make_shared<ProtoRpcRouter>())
             {
                 if (_enablediscover) // 如果启用服务发现，创建注册中心客户端
                 {
                     _client_registry = std::make_shared<client::ClientRegistry>(registry_server_addr.first, registry_server_addr.second);
                     _report_loop_ptr=_report_loop.startLoop();//启动上报负载的线程的事件循环
                 }
-                // 注册RPC请求处理回调
+                // 注册 RPC 请求处理回调（JSON）
                 auto rpc_cb = std::bind(&lcz_rpc::server::RpcRouter::onrpcRequst, _rpc_router.get(), std::placeholders::_1, std::placeholders::_2);
                 _dispacher->registerhandler<lcz_rpc::RpcRequest>(lcz_rpc::MsgType::REQ_RPC, rpc_cb);
+                // 路径二：纯 Proto RPC 请求处理
+                auto proto_rpc_cb = std::bind(&lcz_rpc::server::ProtoRpcRouter::onProtoRequest, _proto_rpc_router.get(), std::placeholders::_1, std::placeholders::_2);
+                _dispacher->registerhandler<lcz_rpc::ProtoRpcRequest>(lcz_rpc::MsgType::REQ_RPC_PROTO, proto_rpc_cb);
                  //// 创建网络服务器实例
                  _server = lcz_rpc::ServerFactory::create(access_addr.second);
                  // 设置消息处理回调
@@ -89,6 +94,7 @@ namespace lcz_rpc
  
                 // RpcServer 仅维持 Provider 心跳与负载上报
             }
+            // 注册 RPC 方法；若启用发现则同步向注册中心注册并启动心跳/负载上报
             void registerMethod(const ServiceDescribe::ptr &service)
             {
                 if (_enablediscover)  // 如果启用服务发现，向注册中心注册方法
@@ -116,13 +122,18 @@ namespace lcz_rpc
                 }
                   // 在路由器中注册方法（线程安全）
                 _rpc_router->registerMethod(service);
-
             }
-            // 启动服务器（阻塞版本，在调用线程中运行事件循环）
+            // 路径二：注册纯 Proto RPC 方法，热路径零 JSON
+            template<typename Req, typename Resp>
+            void registerProtoHandler(const std::string& method,
+                std::function<void(const BaseConnection::ptr&, const Req&, Resp*)> handler)
+            {
+                _proto_rpc_router->registerProtoHandler<Req, Resp>(method, std::move(handler));
+            }
+            // 启动服务器（阻塞）
             void start() { _server->start(); }
             
-            // 启动服务器（非阻塞版本，在单独线程中运行事件循环，支持动态注册服务）
-            //解决start后不能注册服务的问题
+            // 在后台线程启动服务器，主线程可继续调用 registerMethod
             void startInThread() 
             { 
                 if (_server_thread.joinable()) {
@@ -135,7 +146,7 @@ namespace lcz_rpc
                 ILOG("RpcServer 已在后台线程启动，主线程可继续调用 registerMethod()");
             }
             
-            // 等待服务器线程结束
+            // 等待 startInThread 启动的线程结束
             void wait() 
             {
                 if (_server_thread.joinable()) {
@@ -153,13 +164,15 @@ namespace lcz_rpc
                 }
             }
         private:
+            // 获取当前负载（占位实现，后续可动态更新）
             int currentLoad()const
             {
                 static int fake = 0;
                 return (fake += 5) % 100;
                 // 后续再做动态更新
             }
-            void reportLoadTick()//上报负载的定时器回调函数
+            // 定时器回调：向注册中心上报当前负载
+            void reportLoadTick()
             {
                 if (!_enablediscover || !_client_registry) return;
                 const int load = currentLoad();
@@ -175,7 +188,7 @@ namespace lcz_rpc
                     }
                 }
             }
-            //心跳扫描定时器回调函数
+            // 定时器回调：向注册中心发送心跳
             void heartbeatTick()
             {
                 if (!_enablediscover || !_client_registry) return;//如果未启用服务发现或注册中心客户端为空，则返回
@@ -200,6 +213,7 @@ namespace lcz_rpc
             client::ClientRegistry::ptr _client_registry;//注册中心客户端
             Dispacher::ptr _dispacher;//消息分发器
             RpcRouter::ptr _rpc_router;//RPC路由器
+            ProtoRpcRouter::ptr _proto_rpc_router;//路径二：纯 Proto RPC 路由器
             BaseServer::ptr _server;//网络服务器
 
             HeartbeatConfig _hb_config; // 心跳配置
@@ -213,7 +227,7 @@ namespace lcz_rpc
             std::atomic<bool> _report_started{false};//上报负载的线程是否启动
             std::thread _server_thread;//服务器运行线程（用于非阻塞启动）
         };
-        //主题服务器
+        // 主题服务端类：提供主题的创建/删除/订阅/发布
         class TopicServer
         {
         public:
@@ -229,12 +243,14 @@ namespace lcz_rpc
                 auto close_cb = std::bind(&TopicServer::onconnShoutdown, this, std::placeholders::_1);
                 _server->setCloseCallback(close_cb);
             }
+            // 启动主题服务器
             void start()
             {
                 _server->start();
             }
 
         private:
+            // 连接关闭时清理订阅者
             void onconnShoutdown(const BaseConnection::ptr &conn)
             {
                 _topicmanager->onconnShoutdown(conn);

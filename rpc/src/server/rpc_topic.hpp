@@ -11,12 +11,12 @@ namespace lcz_rpc
 {
     namespace server
     {
-        // 主题管理：负责 Topic 请求的执行业务逻辑
+        // 主题管理器类：负责 Topic 请求的创建/删除/订阅/发布等业务逻辑
         class TopicManager
         {
         public:
             using ptr = std::shared_ptr<TopicManager>;
-             // 单个订阅者的状态：保存连接和其关注的主题列表
+             // 订阅者结构体：保存连接、优先级、标签及订阅的主题列表
              struct Subscribe
              {
                  using ptr = std::shared_ptr<Subscribe>;
@@ -27,20 +27,20 @@ namespace lcz_rpc
                  std::vector<std::string> tags;// 构造时把 priority/tags 从 TopicRequest (订阅消息) 里拉出来
                  std::unordered_set<std::string> topics; // 订阅的主题
                  Subscribe(const BaseConnection::ptr &sub_conn) : conn(sub_conn) {}
-                 // 添加主题时调用
+                 // 添加订阅的主题
                  void addTopic(const std::string &topicname)
                  {
                      std::unique_lock<std::mutex> lock(mutex);
                      topics.insert(topicname);
                  }
-                 // 删除主题、取消订阅时调用
+                 // 取消订阅指定主题
                  void removeTopic(const std::string &topicname)
                  {
                      std::unique_lock<std::mutex> lock(mutex);
                      topics.erase(topicname);
                  }
              };//Subscribe
-             // 主题实体：维护订阅者集合，并在发布时向所有订阅者转发消息
+             // 主题结构体：维护订阅者集合，按转发策略向订阅者分发消息
              struct Topic
              {
                  using ptr = std::shared_ptr<Topic>;
@@ -50,19 +50,19 @@ namespace lcz_rpc
                  size_t rr_cursor = 0;//rr轮转cursor
                  std::mt19937 rng{std::random_device{}()};//随机数生成器
                  Topic(const std::string &newtopic) : topic_name(newtopic) {}
-                 // 添加订阅者时调用
+                 // 添加订阅者
                  void addSubscribe(const Subscribe::ptr &sub)
                  {
                      std::unique_lock<std::mutex> lock(mutex);
                      subscribes.insert(sub);
                  }
-                 // 取消订阅、订阅者连接断开时调用
+                 // 移除订阅者
                  void delSubscribe(const Subscribe::ptr &sub)
                  {
                      std::unique_lock<std::mutex> lock(mutex);
                      subscribes.erase(sub);
                  }
-                 // 收到发布请求时调用
+                 // 根据转发策略向订阅者分发消息
                  void pushMessage(const BaseMessage::ptr &msg)
                  {             
                      std::vector<Subscribe::ptr> copy_sub;//使用额外的vector避免直接在锁内发送
@@ -72,7 +72,7 @@ namespace lcz_rpc
                     }
                     return dispatchMessage(msg,copy_sub);
                  }
-                 //根据转发策略分发消息
+                 // 按 forwardStrategy 选择分发方式（广播/轮询/扇出等）
                  void dispatchMessage(const BaseMessage::ptr &msg,const std::vector<Subscribe::ptr> &copy_sub)
                  {
                     auto topic_msg=std::dynamic_pointer_cast<TopicRequest>(msg);
@@ -103,14 +103,14 @@ namespace lcz_rpc
                         break;
                     }
                  }
-                 //广播发送
+                 // 向所有订阅者广播
                  void broadcastSend(const BaseMessage::ptr &msg,const std::vector<Subscribe::ptr> &copy_sub)
                  {
                    if(copy_sub.empty())return;
                    for(auto &subscribe : copy_sub)
                        subscribe->conn->send(msg);
                  }
-                 //轮询发送
+                 // 轮询方式发送给一个订阅者
                  void roundRobinSend(const BaseMessage::ptr &msg,const std::vector<Subscribe::ptr> &copy_sub)
                  {
                     if(copy_sub.empty())return;
@@ -124,7 +124,7 @@ namespace lcz_rpc
                     }
                     cur_sub->conn->send(msg);
                  }
-                 //扇出发送
+                 // 随机选取 fanoutLimit 个订阅者发送
                  void fanoutSend(const BaseMessage::ptr &msg,const std::vector<Subscribe::ptr> &copy_sub)
                  {
                     if(copy_sub.empty())return;
@@ -143,7 +143,7 @@ namespace lcz_rpc
                         fanout_sub[i]->conn->send(msg);
                     }
                  }
-                 //源哈希发送
+                 // 按 shardKey 哈希固定命中同一订阅者
                  void sourceHashSend(const BaseMessage::ptr &msg,const std::vector<Subscribe::ptr> &copy_sub)
                  {
                     if(copy_sub.empty())return;
@@ -154,7 +154,7 @@ namespace lcz_rpc
                     size_t pos = hash_value % copy_sub.size();
                     copy_sub[pos]->conn->send(msg);
                  }
-                 //优先级发送 一次发送一个订阅者 轮转处理优先级相同的情况 不能插队
+                 // 按优先级和标签过滤，选最高优先级匹配者轮转发送
                  void prioritySend(const BaseMessage::ptr &msg,const std::vector<Subscribe::ptr> &copy_sub)
                  {
                     if (copy_sub.empty()) return;
@@ -195,7 +195,7 @@ namespace lcz_rpc
                     cur_sub->conn->send(msg);//发送消息
 
                  }
-                 //冗余发送
+                 // 随机选 redundantCount 个订阅者发送（冗余投递）
                  void redundantSend(const BaseMessage::ptr &msg,const std::vector<Subscribe::ptr> &copy_sub)
                  {
                     if(copy_sub.empty())return;
@@ -220,6 +220,7 @@ namespace lcz_rpc
                 }
              };//Topic
             //TopicManager() {}
+            // 处理主题请求：创建/删除/订阅/取消订阅/发布
             void ontopicRequest(const BaseConnection::ptr &conn, TopicRequest::ptr &msg)
             {
                 bool ret = true;
@@ -247,6 +248,7 @@ namespace lcz_rpc
                     return errorResponse(conn, msg,RespCode::TOPIC_NOT_FOUND);
                 return topicResponse(conn, msg);
             }
+            // 连接断开时从各主题移除该订阅者
             void onconnShoutdown(const BaseConnection::ptr& conn) 
             {
                 std::vector<Topic::ptr> topics;
@@ -272,6 +274,7 @@ namespace lcz_rpc
             }
 
         private:
+            // 发送主题操作成功响应
             void topicResponse(const BaseConnection::ptr &conn,const TopicRequest::ptr &msg)
             {
                 auto resp_msg = MessageFactory::create<TopicResponse>();
@@ -280,6 +283,7 @@ namespace lcz_rpc
                 resp_msg->setId(msg->rid());
                 conn->send(resp_msg);
             }
+            // 发送主题操作错误响应
             void errorResponse(const BaseConnection::ptr &conn,const TopicRequest::ptr &msg,RespCode rcode)
             {
                 auto resp_msg = MessageFactory::create<TopicResponse>();
@@ -288,7 +292,7 @@ namespace lcz_rpc
                 resp_msg->setId(msg->rid());
                 conn->send(resp_msg);
             }
-            // 主题创建
+            // 创建主题（已存在则忽略）
             void topicCreate(const BaseConnection::ptr &conn,const TopicRequest::ptr &msg)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -300,7 +304,7 @@ namespace lcz_rpc
                 }
                 _topics.emplace(topic_name, std::make_shared<Topic>(topic_name));//如果主题不存在，则创建主题
             }
-            // 主题删除
+            // 删除主题并通知订阅者移除
             void topicRemove(const BaseConnection::ptr &conn,const TopicRequest::ptr &msg)
             {
                 std::unordered_set<Subscribe::ptr> subscribes;
@@ -322,7 +326,7 @@ namespace lcz_rpc
                     subscribe->removeTopic(topic_name);
                 }
             }
-            // 主题订阅
+            // 将连接加入主题的订阅者列表
             bool topicSubscribe(const BaseConnection::ptr &conn,const TopicRequest::ptr &msg)
             {
                 Topic::ptr topic;
@@ -354,7 +358,7 @@ namespace lcz_rpc
                 subscribe->addTopic(msg->topicKey());//添加其订阅的主题到订阅者
                 return true;
             }
-            // 主题取消订阅
+            // 从主题的订阅者列表中移除该连接
             void topicancelSubscribe(const BaseConnection::ptr &conn,const TopicRequest::ptr &msg)
             {
                 // 如果找不到不需要特殊处理
@@ -381,7 +385,7 @@ namespace lcz_rpc
                     topic->delSubscribe(subscribe);
                 // 如果该订阅者已没有订阅的主题，可在此处考虑从 _subscribes 中清理，保持映射紧凑
             }
-            // 主题发布
+            // 向主题的订阅者分发发布消息
             bool topicPublish(const BaseConnection::ptr &conn,const TopicRequest::ptr &msg)
             {
                 // 没有找到要发布的主题，返回false

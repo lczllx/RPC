@@ -9,10 +9,12 @@ namespace lcz_rpc
 {
     namespace server
     {
+        // 提供者管理类：管理 method->Provider 映射，支持注册/删除/查询/负载更新/超时扫描
         class ProviderManager
         {
             public:
             using ptr=std::shared_ptr<ProviderManager>;
+            // 提供者结构体：表示一个服务提供者，含连接、地址、负载、心跳时间等
             struct Provider
             {
                 using ptr=std::shared_ptr<Provider>;
@@ -25,12 +27,14 @@ namespace lcz_rpc
                 Provider(const BaseConnection::ptr& connection,const HostInfo& host)
                     :conn(connection),address(host),load(0),
                      lastheartbeat(std::chrono::steady_clock::now()){}
+                // 记录该提供者提供的服务方法
                 void appendmethod(const std::string& method)
                 {
                     std::unique_lock<std::mutex> lock(mutex);
                     methods.emplace_back(method);
                 }
             };
+            // 添加或更新服务提供者
             void addProvider(const BaseConnection::ptr& conn,const HostInfo& host,const std::string& method,int load)
             {
                 Provider::ptr provider;
@@ -50,6 +54,7 @@ namespace lcz_rpc
                 }
                     provider->appendmethod(method);
             }
+            // 根据连接查找对应的 Provider
             Provider::ptr getProvider(const BaseConnection::ptr& conn)
             {                
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -72,6 +77,7 @@ namespace lcz_rpc
                 }
                 _connwithp.erase(it);               
             }
+            // 获取提供指定方法的主机列表
             std::vector<HostInfo> methodHost(const std::string& method)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -84,7 +90,7 @@ namespace lcz_rpc
                 }
                 return ret;
             }
-            //添加负载均衡后的主机详情
+            // 获取提供指定方法的主机详情（含负载）
             std::vector<HostDetail> methodHostDetails(const std::string& method) {
                 std::unique_lock<std::mutex> lock(_mutex);
                 std::vector<HostDetail> ret;
@@ -99,7 +105,7 @@ namespace lcz_rpc
                 }
                 return ret;
             }
-            //给定 `method + host` 找到已注册的 provider，更新 负载
+            // 更新指定 method+host 的 provider 负载
             bool updateProviderLoad(const std::string &method,
                 const HostInfo &host,
                 int load)
@@ -117,7 +123,7 @@ namespace lcz_rpc
                     }
                     return false;
             }
-            //provider更新最后活跃时间
+            // 更新 provider 最后心跳时间
             bool updateProviderLastHeartbeat(const std::string& method, const HostInfo& host) {
                 std::unique_lock<std::mutex> lock(_mutex);
                 auto it = _methodwithproviders.find(method);
@@ -131,7 +137,7 @@ namespace lcz_rpc
                 }
                 return false;
             }
-            //provider超时检测 删除并返回需要广播下线的 (method, host)
+            // 扫描并移除超时未心跳的 provider，返回需通知下线的 (method, host)
             std::vector<std::pair<std::string, HostInfo>> sweepExpired(std::chrono::seconds idle_timeout)
             {
                 std::vector<std::pair<std::string, HostInfo>> expired;
@@ -164,10 +170,12 @@ namespace lcz_rpc
             std::unordered_map<std::string,std::set<Provider::ptr>> _methodwithproviders;
             std::unordered_map<BaseConnection::ptr,Provider::ptr> _connwithp;
         };
+        // 发现者管理类：管理 method->Discoverer 映射，支持上线/下线通知
         class DiscoverManager
         {
             public:
             using ptr=std::shared_ptr<DiscoverManager>;
+            // 发现者结构体：表示一个服务发现者，记录其关注的 method
             struct Discoverer
             {
                 using ptr=std::shared_ptr<Discoverer>;
@@ -175,13 +183,14 @@ namespace lcz_rpc
                 std::vector<std::string> methods;//发现过的服务名称
                 BaseConnection::ptr conn;
                 Discoverer(const BaseConnection::ptr& connection):conn(connection){}
+                // 记录该发现者关注的服务方法
                 void appendmethod(const std::string& method)
                 {
                     std::unique_lock<std::mutex> lock(mutex);
                     methods.emplace_back(method);
                 }
             };
-            //添加discoverer
+            // 添加发现者并建立 method->discoverer 映射
             Discoverer::ptr addDiscoverer(const BaseConnection::ptr& conn,const HostInfo& host,const std::string& method)
             {
                 Discoverer::ptr discoverer;
@@ -200,7 +209,7 @@ namespace lcz_rpc
                     discoverer->appendmethod(method);
                     return discoverer;
             }
-            //获取discoverer
+            // 根据连接查找 Discoverer
             Discoverer::ptr getProvider(const BaseConnection::ptr& conn)
             {                
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -212,7 +221,7 @@ namespace lcz_rpc
                     return it->second;
                 }               
             }
-            //删除discoverer
+            // 删除发现者并更新 method->discoverer 映射
             void delProvider(const BaseConnection::ptr& conn)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -224,18 +233,18 @@ namespace lcz_rpc
                 }
                 _connwithd.erase(it);               
             }
-            //当有新的服务提供者上线，进⾏上线通知
+            // 向关注该 method 的发现者广播上线通知
             void onlineNotify(const std::string& method,const HostInfo& host)
             {
                 return notify(method,host,ServiceOpType::ONLINE);
             }
-            //当服务提供者下线，进⾏下线通知
+            // 向关注该 method 的发现者广播下线通知
             void offlineNotify(const std::string& method,const HostInfo& host)
             {
                 return notify(method,host,ServiceOpType::OFFLINE);
             }
             private:
-            // 将服务上线/下线事件广播给所有正在等待该 method 的发现者
+            // 向关注 method 的发现者广播上线/下线通知
             void notify(const std::string& method,const HostInfo& host,ServiceOpType service_type)
             {
                 std::unique_lock<std::mutex>lock(_mutex);
@@ -259,11 +268,13 @@ namespace lcz_rpc
             std::unordered_map<BaseConnection::ptr,Discoverer::ptr> _connwithd;
         };
 
+        // Provider 与 Discoverer 联合管理类：处理服务注册/发现/负载上报/心跳，协调两者
         class PwithDManager
         {
             public:
             using ptr=std::shared_ptr<PwithDManager>;
             PwithDManager():_provider(std::make_shared<ProviderManager>()),_discoverer(std::make_shared<DiscoverManager>()){}
+            // 处理服务请求：注册/发现/负载上报/心跳
             void onserviceRequest(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg)
             {
                 ServiceOpType optype=msg->optype();
@@ -308,7 +319,7 @@ namespace lcz_rpc
                     return errResponse(conn,msg);
                 }
             }
-            //连接关闭
+            // 连接关闭时移除 provider/discoverer 并广播下线
             void onconnShoutdown(const BaseConnection::ptr& conn)
             {
                 auto provider=_provider->getProvider(conn);
@@ -324,7 +335,7 @@ namespace lcz_rpc
                 }
                 _discoverer->delProvider(conn);
             }
-            //定时清理超时服务提供者并通知发现者
+            // 扫描超时 provider、删除并通知发现者
             std::vector<std::pair<std::string, HostInfo>> sweepAndNotify(int idle_timeout_sec) {
                 auto expired = _provider->sweepExpired(std::chrono::seconds(idle_timeout_sec));
                 for (auto &pr : expired) {
@@ -333,7 +344,7 @@ namespace lcz_rpc
                 return expired;
             }
             private:
-            //错误响应
+            // 发送操作类型错误响应
             void errResponse(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg)
             {
                 auto msg_resp=MessageFactory::create<ServiceResponse>();
@@ -344,7 +355,7 @@ namespace lcz_rpc
                 conn->send(msg_resp);
 
             }
-            //服务注册响应
+            // 发送服务注册成功响应
             void registryResponse(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg)
             {
                 auto msg_resp=MessageFactory::create<ServiceResponse>();
@@ -354,7 +365,7 @@ namespace lcz_rpc
                 msg_resp->setOptype(ServiceOpType::REGISTER);
                 conn->send(msg_resp);
             }
-            //服务发现响应
+            // 发送服务发现响应（含主机列表及负载）
             void discoverResponse(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg)
             {
                 auto msg_resp=MessageFactory::create<ServiceResponse>();
@@ -367,7 +378,7 @@ namespace lcz_rpc
                 msg_resp->setHostDetails(hosts);
                 conn->send(msg_resp);
             }
-            //负载上报响应
+            // 发送负载上报响应
             void updateloadResponse(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg,bool update_success)
             {
                
@@ -387,7 +398,7 @@ namespace lcz_rpc
                 msg_resp->setOptype(ServiceOpType::LOAD_REPORT);
                 conn->send(msg_resp);
             }
-            //心跳检测响应
+            // 发送心跳响应
             void heartbeatResponse(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg,bool update_success,ServiceOpType optype)
             {
                 auto msg_resp=MessageFactory::create<ServiceResponse>();

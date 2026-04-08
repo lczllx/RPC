@@ -22,7 +22,7 @@
 
 namespace lcz_rpc
 {
-    // 简单的适配器：把 muduo::net::Buffer 封装成 BaseBuffer 接口
+    // Muduo 缓冲区适配器类：将 muduo::net::Buffer 封装成 BaseBuffer 接口
     class MuduoBuffer:public BaseBuffer
     {
         public:
@@ -61,6 +61,7 @@ namespace lcz_rpc
         muduo::net::Buffer* _buffer;
        
     };
+    // Buffer 工厂类：创建 MuduoBuffer 实例
     class BufferFactory
     {
       public:
@@ -70,12 +71,12 @@ namespace lcz_rpc
          return std::make_shared<MuduoBuffer>(std::forward<ARGS>(args)...);
       }
     };
-    // 基于 「长度 + 类型 + id + body」 的简单协议
+    // LV 协议类：基于「长度+类型+id+body」的简单网络协议
     class LVProtocol :public BaseProtocol
     {
       public:
           using ptr = std::shared_ptr<LVProtocol>;
-          // 判断是否能处理缓冲区数据
+          // 判断缓冲区中是否已有完整消息可解析
           virtual bool canProcessed(const BaseBuffer::ptr &buf) override
           {
             // 检查是否有足够的数据读取长度字段
@@ -91,7 +92,7 @@ namespace lcz_rpc
             }
             return true;
           }
-          // 处理消息
+          // 从缓冲区解析一条完整消息，填充 msg
           virtual bool onMessage(const BaseBuffer::ptr &buf, BaseMessage::ptr &msg) override
           {
             if(!canProcessed(buf)){return false;}
@@ -110,7 +111,7 @@ namespace lcz_rpc
             msg->setMsgType(msgtype);
             return true;
           }
-          // 序列化消息
+          // 将消息序列化为「长度+类型+id+body」格式的字节串
           virtual std::string serialize(const BaseMessage::ptr &msg) override
           {
             //len msgtype idlen id data
@@ -145,6 +146,7 @@ namespace lcz_rpc
           const size_t _msgtypefield_len=4;
           const size_t _msgidfield_len=4;
       };
+      // 协议工厂类：创建 LVProtocol 实例
       class ProtocolFactory
       {
         public:
@@ -155,7 +157,7 @@ namespace lcz_rpc
         }
        
       };
-      // BaseConnection 的 muduo 实现：负责序列化和底层 send/shutdown
+      // Muduo 连接类：BaseConnection 的 muduo 实现，负责序列化和底层 send/shutdown
       class MuduoConnection :public BaseConnection
       {
          public:
@@ -165,23 +167,23 @@ namespace lcz_rpc
             _connection = connection;
             _protocol = protocol;
          }
-         // 发送消息（BaseMessage -> 协议序列化 -> muduo::TcpConnection::send）
+         // 将消息序列化后通过底层 TcpConnection 发送
           virtual void send(const BaseMessage::ptr &msg)override
           {
             std::string data=_protocol->serialize(msg);
              _connection->send(data);
           }
-          // 关闭连接
+          // 关闭底层 TCP 连接
           virtual void shutdown()override
           {
             _connection->shutdown();
           }
-          // 检查连接状态
+          // 检查底层连接是否仍然有效
           virtual bool connected()override
           {
             return _connection->connected();
           }
-          // 获取底层连接的 EventLoop（用于定时器）
+          // 获取底层连接的 EventLoop，供 Requestor 等设置超时定时器
           muduo::net::EventLoop* getLoop() const
           {
             return _connection->getLoop();
@@ -191,6 +193,7 @@ namespace lcz_rpc
          BaseProtocol::ptr _protocol;
         
       };
+      // 连接工厂类：创建 MuduoConnection 实例
       class ConnectionFactory
       {
          public:
@@ -200,7 +203,7 @@ namespace lcz_rpc
             return std::make_shared<MuduoConnection>(std::forward<ARGS>(args)...);
          }
       };
-      // 基于 muduo::net::TcpServer 的服务器适配器
+      // Muduo 服务器类：基于 muduo::net::TcpServer 的 BaseServer 实现
       class MuduoServer :public BaseServer 
       {
          public:
@@ -208,7 +211,7 @@ namespace lcz_rpc
             MuduoServer(const int port)
             :_server(&_baseloop,muduo::net::InetAddress("0.0.0.0",port),"MuduoServer",muduo::net::TcpServer::kReusePort/*启用端口重用*/)
             ,_protocol(ProtocolFactory::create()){}
-             // 启动服务器
+             // 启动服务器并进入事件循环（阻塞）
             virtual void start() override
             {
                _server.setConnectionCallback(std::bind(&MuduoServer::onConnection,this,std::placeholders::_1));
@@ -217,6 +220,7 @@ namespace lcz_rpc
                _baseloop.loop();//启动事件循环
             }
             private:
+            // 连接建立/断开时维护 _connections 映射并触发回调
             void onConnection(const muduo::net::TcpConnectionPtr& conn)
             {
               if(conn->connected())
@@ -246,7 +250,8 @@ namespace lcz_rpc
                   }                
               }
             }
-           void onMessage(const muduo::net::TcpConnectionPtr& conn,muduo::net::Buffer* buf,muduo::Timestamp receiveTime/*<-- 这里添加一个参数，用于接收时间*/)
+           // 从 Buffer 解析完整消息并调用 _cb_message 派发
+           void onMessage(const muduo::net::TcpConnectionPtr& conn,muduo::net::Buffer* buf,muduo::Timestamp receiveTime)
            {
               auto base_buf=BufferFactory::create(buf);            
               while(true)
@@ -293,6 +298,7 @@ namespace lcz_rpc
             std::unordered_map<muduo::net::TcpConnectionPtr/**<-- 网络连接指针 */,BaseConnection::ptr/**<-- 抽象连接指针 */> _connections;
             std::mutex _mutex;
       };
+      // 服务器工厂类：创建 MuduoServer 实例
       class ServerFactory
       {
          public:
@@ -302,7 +308,7 @@ namespace lcz_rpc
             return std::make_shared<MuduoServer>(std::forward<ARGS>(args)...);
          }
       };
-      // 基于 muduo::net::TcpClient 的客户端适配器，支持同步 connect/shutdown
+      // Muduo 客户端类：基于 muduo::net::TcpClient 的 BaseClient 实现，支持同步 connect/shutdown
       class MuduoClient :public BaseClient 
       {
          public:
@@ -313,6 +319,7 @@ namespace lcz_rpc
             ,_baceloop(_loopthread.startLoop())  // 独立的事件循环线程
             ,_downlatch(1)
             ,_client(_baceloop,muduo::net::InetAddress(sip,sport),"MuduoClient"){}
+            // 连接建立/断开时更新 _connection
             void onConnection(const muduo::net::TcpConnectionPtr& conn)
             {
               if(conn->connected())
@@ -325,6 +332,7 @@ namespace lcz_rpc
                 DLOG("连接断开");_connection.reset();
               } 
            }
+           // 从 Buffer 解析消息并调用 _cb_message 派发
            void onMessage(const muduo::net::TcpConnectionPtr& conn,muduo::net::Buffer* buf,muduo::Timestamp receiveTime)
            {
              auto bace_buf=BufferFactory::create(buf);
@@ -347,7 +355,7 @@ namespace lcz_rpc
                 if(_cb_message) _cb_message(_connection,msg);
              }
            }
-           // 连接服务器
+           // 连接服务器并阻塞等待连接建立
            virtual void connect() override
            {
              _client.setConnectionCallback(std::bind(&MuduoClient::onConnection,this,std::placeholders::_1));
@@ -357,12 +365,12 @@ namespace lcz_rpc
                _downlatch.wait();
                DLOG("连接服务器成功！");
             }
-             // 关闭连接
+             // 断开与服务器的连接
              virtual void shutdown() override
              {
                _client.disconnect();
              }
-           // 发送消息
+           // 通过已建立的连接发送消息，失败返回 false
            virtual bool send(const BaseMessage::ptr& msg) override
            {
                if (!_connection) {ELOG("连接对象为空"); return false;}
@@ -371,13 +379,13 @@ namespace lcz_rpc
                return true;
            
            }
-             // 获取连接对象
+             // 获取封装后的连接对象
              virtual BaseConnection::ptr connection()  override
              {
                if(_connection.get()==nullptr){ELOG("连接不存在");return nullptr;}
                return _connection;
              }
-             // 检查连接状态
+             // 检查是否已连接且连接有效
              virtual bool connected()  override
              {
                return _connection && _connection->connected();
@@ -391,6 +399,7 @@ namespace lcz_rpc
            muduo::net::TcpClient _client;
            BaseConnection::ptr _connection;
       };
+      // 客户端工厂类：创建 MuduoClient 实例
       class ClientFactory
       {
          public:

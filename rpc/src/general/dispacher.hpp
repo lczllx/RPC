@@ -13,12 +13,14 @@
 
 namespace lcz_rpc
 {
+    // 消息回调抽象基类：接收 conn 和 msg 的统一接口
     class Callback
     {
         public:
         using ptr=std::shared_ptr<Callback>;
         virtual void onMessage(const BaseConnection::ptr& conn,BaseMessage::ptr& msg)=0;       
     };
+    // 类型化回调包装类：将 BaseMessage 转为 T 后调用用户回调
     template<typename T>
     class CallbackType:public Callback
     {
@@ -29,6 +31,7 @@ namespace lcz_rpc
         // CallbackType(MessageCallback&& handler) : _handler(std::move(handler)) {}
       
         CallbackType(const MessageCallback &handler):_handler(handler){}
+        // 接收 BaseMessage，安全转换为 T 后调用 _handler
         void onMessage(const BaseConnection::ptr& conn,BaseMessage::ptr& msg)
         {
             auto transmit_type=std::dynamic_pointer_cast<T>(msg);
@@ -38,6 +41,7 @@ namespace lcz_rpc
         MessageCallback _handler;
     };
 
+    // 消息分发器类：按 MsgType 查找并调用已注册的处理器
     class Dispacher
     {
         public:
@@ -51,6 +55,7 @@ namespace lcz_rpc
         //     _handlers.emplace(msgtype,cb);
         // }
          
+        // 注册指定消息类型的处理函数
         template<typename T>
         void registerhandler(MsgType msgtype,const typename CallbackType<T>::MessageCallback& handler)
         {
@@ -58,6 +63,7 @@ namespace lcz_rpc
             auto cb=std::make_shared<CallbackType<T>>(handler);// 创建类型特定的回调包装器
             _handlers.emplace(msgtype,cb);
         }
+        // 根据消息类型查找并调用对应的处理器
         void onMessage(const BaseConnection::ptr& conn,BaseMessage::ptr& msg)
         {
              if (!msg) {
@@ -71,7 +77,7 @@ namespace lcz_rpc
                 return it->second->onMessage(conn,msg);// 调用对应的处理器
             }
             //没有找到指定类型的处理回调
-            ELOG("收到未知消息类型 msgtype=%d (REQ_RPC=0, RSP_RPC=1, REQ_TOPIC=2, RSP_TOPIC=3, REQ_SERVICE=4, RSP_SERVICE=5)", 
+            ELOG("收到未知消息类型 msgtype=%d (REQ_RPC=0..RSP_SERVICE=5, REQ_RPC_PROTO=6, RSP_RPC_PROTO=7, REQ_TOPIC_PROTO=8, RSP_TOPIC_PROTO=9, REQ_SERVICE_PROTO=10, RSP_SERVICE_PROTO=11)", 
                  static_cast<int>(msg->msgType()));
             conn->shutdown();//关闭未知消息的连接
 

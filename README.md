@@ -101,25 +101,25 @@ sh run_benchmark_json.sh
 
 ### 调用链
 
-![RPC 调用流程图](https://raw.githubusercontent.com/lczllx/RPC/main/flowchat/flow-rpc-call.png)
+![RPC 调用流程图](flowchat/flow-rpc-call.png)
 
 `RpcClient` / `RpcCaller` 发出请求，服务端按 method 进入 `registerProtoHandler`，响应原路返回。
 
 ### 注册与发现
 
-![服务注册发现流程图](https://raw.githubusercontent.com/lczllx/RPC/main/flowchat/flow-registry.png)
+![服务注册发现流程图](flowchat/flow-registry.png)
 
 服务方注册并定时心跳。调用方按 method 向注册中心取节点列表，再在本地选择实例。
 
 ### 心跳与实例摘除
 
-![心跳保活和失效剔除](https://raw.githubusercontent.com/lczllx/RPC/main/flowchat/flow-heartbeat.png)
+![心跳保活和失效剔除](flowchat/flow-heartbeat.png)
 
 心跳间隔 **10s**，**15s** 内无更新则从列表移除该实例。
 
 ### 客户端超时
 
-![客户端超时控制](https://raw.githubusercontent.com/lczllx/RPC/main/flowchat/flow-timeout.png)
+![客户端超时控制](flowchat/flow-timeout.png)
 
 按 `rid` 注册 muduo 定时器，超时先返回 `TIMEOUT`，响应先到达则取消定时器。迟到响应丢弃，避免与超时重复处理。
 

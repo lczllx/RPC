@@ -29,12 +29,18 @@ namespace lcz_rpc{
 
 // 消息类型定义
 enum class MsgType {
-    REQ_RPC = 0,        // RPC请求消息
-    RSP_RPC,            // RPC响应消息
+    REQ_RPC = 0,        // RPC请求消息（JSON）
+    RSP_RPC,            // RPC响应消息（JSON）
     REQ_TOPIC,          // 主题操作请求
     RSP_TOPIC,          // 主题操作响应
     REQ_SERVICE,        // 服务操作请求
-    RSP_SERVICE         // 服务操作响应
+    RSP_SERVICE,        // 服务操作响应
+    REQ_RPC_PROTO,      // RPC 请求（纯 Proto）
+    RSP_RPC_PROTO,      // RPC 响应（纯 Proto）
+    REQ_TOPIC_PROTO,    // 主题请求（纯 Proto）
+    RSP_TOPIC_PROTO,    // 主题响应（纯 Proto）
+    REQ_SERVICE_PROTO,  // 服务请求（纯 Proto）
+    RSP_SERVICE_PROTO   // 服务响应（纯 Proto）
 };
 
 // 响应码类型定义
@@ -51,7 +57,7 @@ enum class RespCode {
     INTERNAL_ERROR,             // 内部错误
     TIMEOUT                     // 请求超时
 };
-//错误原因
+// 根据响应码返回对应的错误描述字符串
 static std::string errReason(RespCode code) {
     static std::unordered_map<RespCode, std::string> err_map = {
         {RespCode::SUCCESS, "成功处理!"},
