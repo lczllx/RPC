@@ -100,8 +100,14 @@
 
 ## 五、常见问题
 
+**Q：Annotations 里写 Node.js 20 deprecated、`actions/checkout@v4`，同时 job 失败？**  
+A：**警告不等于失败原因。** 弃用提示来自旧版 checkout 用的 Node 20；真正让 `exit code 1` 的是后面某一步（Configure / Build / Run unit tests）里的 **error**。请到该 job 里**点开红色步骤**，看完整日志里的 `error:` / `fatal:`。本仓库 CI 已改用 `actions/checkout@v6`，可减少此类 Annotation。
+
 **Q：为什么本地能过、CI 失败？**  
 A：缺依赖、子模块未初始化、或 GCC/CMake 版本与 `ubuntu-22.04` 不一致。以 CI 日志为准，在 `ci.yml` 的 `apt install` 里补包或固定版本。
+
+**Q：Configure CMake 报找不到 Boost / `Could NOT find Boost`？**  
+A：muduo 需要 **Boost**（`find_package(Boost REQUIRED)`）。CI 里需安装 **`libboost-dev`**（已在 `ci.yml` 中）。本地机器常已预装 Boost，容易忽略。
 
 **Q：`ctest` 在 CI 里找不到测试？**  
 A：可继续像现在一样**直接运行** `./tests/lcz_rpc_unit_tests`；与 `gtest_discover_tests` 是否注册成功无关。

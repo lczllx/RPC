@@ -37,22 +37,39 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      # v6 使用 Node 24 运行时，避免 “Node.js 20 deprecated” 的 Annotation 警告（该警告本身不会导致失败）
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
+      # muduo 依赖 Boost（CMake: find_package(Boost REQUIRED)），仅装 json/protobuf 不够，缺了会卡在 Configure
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            build-essential \
             cmake \
+            pkg-config \
             g++ \
             make \
+            libboost-dev \
             libjsoncpp-dev \
             protobuf-compiler \
             libprotobuf-dev \
             libgtest-dev
+
+      # 提前失败并给出可读提示：仓库根是否含 rpc/、muduo 子模块是否拉下
+      - name: Verify repo layout and muduo submodule
+        run: |
+          if [ ! -f rpc/CMakeLists.txt ]; then
+            echo "::error title=路径不对::仓库根下没有 rpc/CMakeLists.txt。若 GitHub 上只有 rpc 目录内容、没有外层 rpc 文件夹，请把 ci.yml 里的 working-directory: rpc 改为在仓库根执行 cmake。"
+            exit 1
+          fi
+          if [ ! -f rpc/muduo/CMakeLists.txt ]; then
+            echo "::error title=子模块未拉取::缺少 rpc/muduo。请确认已推送 .gitmodules，且 checkout 使用 submodules: recursive。"
+            exit 1
+          fi
 
       # CMake 工程在子目录 rpc/（不是仓库根）
       - name: Configure CMake
