@@ -5,6 +5,7 @@ gdb_debug/
 # 构建目录
 build/
 rpc/build/
+rpc/build-ci/
 
 # IDE 配置
 .vscode/
