@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LCZ_RPC_BUILD_EXAMPLES "构建 example 目录中的示例程序" ON)
+option(LCZ_RPC_BUILD_TESTS "构建单元测试 (GoogleTest，首次需联网拉取)" OFF)
 
 # 统一使用系统安装的 jsoncpp（头文件路径 <jsoncpp/json/json.h>）
 # 先尝试 CMake 配置，若无则用 pkg-config（部分系统仅提供 pkg-config）
@@ -65,5 +66,10 @@ add_subdirectory(src)
 
 if(LCZ_RPC_BUILD_EXAMPLES)
   add_subdirectory(example)
+endif()
+
+if(LCZ_RPC_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
 endif()
 

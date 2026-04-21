@@ -4,6 +4,7 @@
 #include "../general/dispacher.hpp"
 #include <set>
 #include "../general/publicconfig.hpp"
+#include <iostream>
 
 namespace lcz_rpc
 {
@@ -281,6 +282,11 @@ namespace lcz_rpc
                 if(optype==ServiceOpType::REGISTER)
                 {//服务注册通知
                     ILOG("%s:%d 注册服务 %s", msg->host().first.c_str(),msg->host().second, msg->method().c_str());
+                    // demo 友好输出：不依赖日志宏等级，便于面试演示
+                    std::cout << "[Registry] 收到注册 method=" << msg->method()
+                              << " host=" << msg->host().first << ":" << msg->host().second
+                              << " load=" << msg->load()
+                              << std::endl;
                     _provider->addProvider(conn,msg->host(),msg->method(),msg->load());//注册服务
                     _discoverer->onlineNotify(msg->method(),msg->host());
                     //后续在这里处理负载均衡

@@ -20,7 +20,7 @@
 
 #define LDEFAULT LINF          // 默认开启所有等级的日志
 #define LOG(level,format,...){\
-    if(level>=LERR)/*只打印错误日志*/{\
+    if(level>=LINF)/*只打印错误日志*/{\
         time_t t=time(NULL);\
         struct tm *lt=localtime(&t);\
         char time_tmp[32]={0};\
@@ -69,7 +69,7 @@ class JSON{
     }
 };
 // 简单的 uuid 生成工具：前半随机数，后半自增序号
-std::string uuid() {
+inline std::string uuid() {
     std::stringstream ss;
     //1. 构造⼀个机器随机数对象
     std::random_device rd;

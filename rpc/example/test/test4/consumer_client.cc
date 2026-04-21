@@ -13,21 +13,26 @@ int main()
     // 创建 RPC 客户端（启用服务发现）
     lcz_rpc::client::RpcClient client(true, "127.0.0.1", 7070);
     
-    // 等待服务发现
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    
-    // 尝试调用服务（这会触发服务发现，从而启动 Consumer 心跳）
+    // 演示时常见情况：Provider 刚启动，注册中心信息尚未就绪
+    // 因此这里做重试，保证演示稳定性
     Json::Value params, result;
     params["num1"] = 10;
     params["num2"] = 20;
-    
-    std::cout << "尝试调用服务 add(10, 20)..." << std::endl;
-    bool ret = client.call("add", params, result);
-    
+
+    bool ret = false;
+    constexpr int kMaxTry = 10;
+    for (int i = 1; i <= kMaxTry; ++i)
+    {
+        std::cout << "尝试调用服务 add(10, 20)... (第 " << i << "/" << kMaxTry << " 次)" << std::endl;
+        ret = client.call("add", params, result);
+        if (ret) break;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
     if (ret) {
         std::cout << "调用成功，结果: " << result.asInt() << std::endl;
     } else {
-        std::cout << "调用失败（服务可能还未注册）" << std::endl;
+        std::cout << "调用失败（服务可能仍未注册或已下线）" << std::endl;
     }
     
     std::cout << "客户端已启动，Consumer 心跳将每10秒发送一次..." << std::endl;

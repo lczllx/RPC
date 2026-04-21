@@ -1,0 +1,75 @@
+# =============================================================================
+# GitHub Actions：以「整个 RPC 仓库」为根时的 CI
+# -----------------------------------------------------------------------------
+# 仓库布局（根目录即本文件所在仓库根）：
+#   RPC/
+#     README.md, autobuild/, .gitmodules
+#     rpc/          ← CMake 工程根（muduo 子模块在 rpc/muduo）
+#     .github/workflows/ci.yml
+#
+# 流程要点：
+#   1. checkout + submodules:recursive — 拉取 chenshuo/muduo
+#   2. apt 安装依赖（与 README 一致，含 libgtest-dev）
+#   3. 在 rpc/build 全量编译：examples + 单元测试（整库能编过）
+#   4. 运行 lcz_rpc_unit_tests
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+# 同一分支新提交会取消还在跑的旧任务，省 Actions 分钟
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            g++ \
+            make \
+            libjsoncpp-dev \
+            protobuf-compiler \
+            libprotobuf-dev \
+            libgtest-dev
+
+      # CMake 工程在子目录 rpc/（不是仓库根）
+      - name: Configure CMake
+        working-directory: rpc
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLCZ_RPC_BUILD_TESTS=ON \
+            -DLCZ_RPC_BUILD_EXAMPLES=ON
+
+      # 全量编译：muduo + proto + 所有 example + 单元测试
+      - name: Build entire RPC project
+        working-directory: rpc/build
+        run: cmake --build . -j$(nproc)
+
+      - name: Run unit tests
+        working-directory: rpc/build
+        run: ./tests/lcz_rpc_unit_tests

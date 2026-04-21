@@ -6,6 +6,7 @@
 #include "rpc_topic.hpp"
 #include "../general/net.hpp"
 #include <atomic>//原子操作
+#include <iostream>
 #include <thread>//线程支持
 #include "../general/publicconfig.hpp"
 
@@ -38,6 +39,13 @@ namespace lcz_rpc
                     auto expired = _pdmanager->sweepAndNotify(_hb_config.idle_timeout_sec);
                     if (!expired.empty()) {
                         ILOG("[RegistryServer-服务扫描] 发现 %zu 个过期提供者，已通知下线", expired.size());
+                        // 不依赖日志宏等级，便于演示
+                        for (const auto &pr : expired) {
+                            std::cout << "[Registry] 剔除过期提供者 method=" << pr.first
+                                      << " host=" << pr.second.first << ":" << pr.second.second
+                                      << " (idle>" << _hb_config.idle_timeout_sec << "s)"
+                                      << std::endl;
+                        }
                     }
                 });
             }
@@ -51,6 +59,9 @@ namespace lcz_rpc
             // 连接关闭时清理 provider/discoverer
             void onconnShoutdown(const BaseConnection::ptr &conn)
             {
+                // demo 友好输出：Provider 进程退出/断开时，注册中心会立即感知连接断开
+                // 注意：这种“即时下线”不会走超时扫描剔除逻辑
+                std::cout << "[Registry] 连接断开，触发下线处理" << std::endl;
                 _pdmanager->onconnShoutdown(conn);
             }
 
@@ -100,8 +111,24 @@ namespace lcz_rpc
                 if (_enablediscover)  // 如果启用服务发现，向注册中心注册方法
                 {
                     int currentLoad = 10; // 临时写死，后续再做动态更新
-                    if(_client_registry->methodRegistry(service->getMethodname(), _access_addr, currentLoad))
+                    bool ok = false;
+                    // demo/工程稳定性：注册中心刚启动时可能有短暂不可用，这里做少量重试
+                    for (int attempt = 1; attempt <= 3; ++attempt)
                     {
+                        ok = _client_registry->methodRegistry(service->getMethodname(), _access_addr, currentLoad);
+                        if (ok) break;
+                        std::cout << "[Provider] 注册到 Registry 失败，method=" << service->getMethodname()
+                                  << " host=" << _access_addr.first << ":" << _access_addr.second
+                                  << " attempt=" << attempt << "/3"
+                                  << std::endl;
+                        std::this_thread::sleep_for(std::chrono::seconds(1));
+                    }
+                    if(ok)
+                    {
+                        std::cout << "[Provider] 注册成功 method=" << service->getMethodname()
+                                  << " host=" << _access_addr.first << ":" << _access_addr.second
+                                  << " load=" << currentLoad
+                                  << std::endl;
                         {
                             std::unique_lock<std::mutex>lock(_methods_mutex);
                             _registered_methods.emplace_back(service->getMethodname());
@@ -117,6 +144,12 @@ namespace lcz_rpc
                                 static_cast<double>(_hb_config.heartbeat_interval_sec)/*这是给runEvery方法的参数，表示心跳间隔时间*/,
                                 std::bind(&RpcServer::heartbeatTick, this));
                         }
+                    }
+                    else
+                    {
+                        std::cout << "[Provider] 注册到 Registry 最终失败，method=" << service->getMethodname()
+                                  << " host=" << _access_addr.first << ":" << _access_addr.second
+                                  << std::endl;
                     }
 
                 }

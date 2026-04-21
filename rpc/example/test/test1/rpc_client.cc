@@ -1,6 +1,6 @@
 #include "src/client/rpc_client.hpp"
-#include "src/general/detail.hpp"
-#include<thread>
+#include <iostream>
+#include <thread>
 void onrpcResponse(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcResponse::ptr& msg)
 {
     DLOG("收到rpc响应");
@@ -23,12 +23,18 @@ void ontopicResponse(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::TopicResp
 
 int main()
 {
+    std::cout << "=== RPC 客户端启动（test1）===" << std::endl;
+    std::cout << "注册中心: 127.0.0.1:8080" << std::endl;
+    std::cout << "将通过服务发现找到 add 服务提供者并调用" << std::endl;
+    std::cout << "================================" << std::endl;
+
     lcz_rpc::client::RpcClient client(true,"127.0.0.1",8080);//先进行服务发现再进行rpc请求
     //同步请求
     Json::Value params,result;
     params["num1"]=66;
     params["num2"]=33;
     
+    std::cout << "调用 1（同步）: add(66, 33)" << std::endl;
     bool ret=client.call("add",params,result);
     if(ret)std::cout<<"result:"<<result.asInt()<<std::endl;
     else std::cout<<"调用失败"<<std::endl;
@@ -38,6 +44,7 @@ int main()
     paramss["num1"]=66;
     paramss["num2"]=3;
     
+    std::cout << "调用 2（future）: add(66, 3)" << std::endl;
     ret=client.call("add",paramss,resp_future);
     if(ret){
         resultt=resp_future.get();

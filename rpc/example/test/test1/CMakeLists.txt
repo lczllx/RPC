@@ -1,14 +1,19 @@
 add_executable(test1_registry_server registry_server.cc)
 target_link_libraries(test1_registry_server PRIVATE lcz_rpc)
+set_target_properties(test1_registry_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 add_executable(test1_rpc_server rpc_server.cc)
 target_link_libraries(test1_rpc_server PRIVATE lcz_rpc)
+set_target_properties(test1_rpc_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 add_executable(test1_rpc_client rpc_client.cc)
 target_link_libraries(test1_rpc_client PRIVATE lcz_rpc)
+set_target_properties(test1_rpc_client PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 add_executable(test1_slow_rpc_server slow_rpc_server.cc)
 target_link_libraries(test1_slow_rpc_server PRIVATE lcz_rpc)
+set_target_properties(test1_slow_rpc_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 add_executable(test1_timeout_test_client timeout_test_client.cc)
 target_link_libraries(test1_timeout_test_client PRIVATE lcz_rpc)
+set_target_properties(test1_timeout_test_client PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
