@@ -32,5 +32,5 @@ echo ">>> 2) 运行 Protobuf benchmark"
 (cd "${BENCH_DIR}" && bash run_benchmark.sh)
 echo
 
-echo "完成。建议面试时强调：100KB echo 场景 P99 从 1.96ms 降到 0.72ms（见 rpc/docs/protobuf_implementation.md）。"
+echo "完成"
 
