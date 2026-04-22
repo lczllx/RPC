@@ -1,0 +1,10 @@
+# 减小 docker build 上下文（构建上下文 = 仓库根 RPC/）
+.git
+.github
+**/.git
+**/build
+**/build-ci
+**/*.o
+**/*.a
+**/.cache
+rpc/docs

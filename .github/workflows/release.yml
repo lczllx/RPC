@@ -1,0 +1,79 @@
+# =============================================================================
+# CD（持续交付）：推送版本 tag 时全量编译、跑单测、发布 GitHub Release + 二进制 zip
+# -----------------------------------------------------------------------------
+# 使用方式：
+#   git tag v0.1.0
+#   git push origin v0.1.0
+# 或在 GitHub 上从某个提交创建 tag。
+#
+# 产物：Release 附件 lcz-rpc-<tag>-linux-x64-binaries.zip（含 rpc/build/bin 与单元测试可执行文件）
+# 要求：仓库 Settings → Actions → General → Workflow permissions 允许读写 Contents（默认 fork 外仓库一般可）
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            pkg-config \
+            g++ \
+            make \
+            libboost-dev \
+            libjsoncpp-dev \
+            protobuf-compiler \
+            libprotobuf-dev \
+            libgtest-dev \
+            zip
+
+      - name: Verify repo layout and muduo submodule
+        run: |
+          test -f rpc/CMakeLists.txt
+          test -f rpc/muduo/CMakeLists.txt
+
+      - name: Configure & Build
+        working-directory: rpc
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLCZ_RPC_BUILD_TESTS=ON \
+            -DLCZ_RPC_BUILD_EXAMPLES=ON
+          cmake --build . -j$(nproc)
+
+      - name: Run unit tests
+        working-directory: rpc/build
+        run: ./tests/lcz_rpc_unit_tests
+
+      - name: Package binaries
+        run: |
+          cd rpc/build
+          zip -r "${GITHUB_WORKSPACE}/lcz-rpc-${{ github.ref_name }}-linux-x64-binaries.zip" bin tests/lcz_rpc_unit_tests
+          ls -la "${GITHUB_WORKSPACE}"/lcz-rpc-*.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lcz-rpc-${{ github.ref_name }}-linux-x64-binaries.zip
+          generate_release_notes: true

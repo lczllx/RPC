@@ -10,8 +10,13 @@
 |------|------|------|
 | 单元测试 | `lcz_rpc_unit_tests`（GTest） | 已有 |
 | 构建 | CMake，全量 examples + tests | 已有 |
-| 流水线文件 | `.github/workflows/ci.yml` | 已有 |
-| 子模块 | CI 里 `submodules: recursive` | 已有 |
+| CI | `.github/workflows/ci.yml`（push/PR） | 已有 |
+| CD 发版 | `.github/workflows/release.yml`（推送 `v*` tag → Release + zip） | 已有 |
+| Docker | 根目录 `Dockerfile` + `.dockerignore`；CI 中 `docker-image` job 校验构建 | 已有 |
+| README | `main` 分支 CI 徽章 | 已有 |
+| 子模块 | 工作流里 `submodules: recursive` | 已有 |
+| 推镜像到 GHCR/Docker Hub | 需另写 `docker login` + push | 未做（见 `docker_guide.md`） |
+| docker-compose 编排示例 | 未做（按需） |
 
 ---
 
@@ -46,14 +51,20 @@
 
 ### P2 — 「CD」里最常见的：发版（Release）
 
-**缺什么：** 只有源码，没有「打 tag 自动生成 Release + 附件」。
+**本仓库已配置：** `.github/workflows/release.yml`
 
-**怎么补（思路）：**
+**怎么用：**
 
-1. 本地打标签：`git tag v0.1.0 && git push origin v0.1.0`
-2. 新建 `.github/workflows/release.yml`：`on: push: tags: ['v*']`，步骤与 CI 类似：checkout、装依赖、cmake、全量编译，再用 **`actions/upload-artifact`** 或 **`softprops/action-gh-release`** 上传 `rpc/build/bin` 打成的 zip（注意体积与许可证）。
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
-若你不需要给用户预编译包，**可只做「Release 页面 + 源码 zip」**，GitHub 默认会附带源码，工作量最小。
+推送以 `v` 开头的 tag 后，Actions 会全量编译、跑单测，并创建 **GitHub Release**，附件为 **`lcz-rpc-<tag>-linux-x64-binaries.zip`**（含 `rpc/build/bin` 与 `lcz_rpc_unit_tests`）。
+
+若 Release 创建失败，到 **Settings → Actions → General → Workflow permissions** 确认允许 **Read and write contents**（私有/组织仓库可能被限制）。
+
+若不需要二进制附件，可以后改 workflow 只生成 Release 说明、不传 zip。
 
 ---
 
@@ -83,7 +94,7 @@
 
 1. **开分支保护 + 必选 CI**（P0）—— 5 分钟，收益最大  
 2. **确认 CI 在 GitHub 上绿**（推送一次或开 PR 试）  
-3. 需要对外发二进制再 **加 release workflow**（P2）  
+3. **发版**：打 `v*` tag 推送，确认 **Release** workflow 绿且 Releases 页有附件（P2，已配 `release.yml`）  
 4. 有服务器再 **加 deploy + Secrets**（P3）  
 5. 有精力再 **集成测试 + 缓存编译**（P4 / P1）
 
@@ -114,4 +125,4 @@ A：可继续像现在一样**直接运行** `./tests/lcz_rpc_unit_tests`；与 
 
 ---
 
-文档版本：与当前 `.github/workflows/ci.yml` 行为一致时可维护本节；流水线变更时请同步更新「五」中路径说明。
+文档版本：与当前 `.github/workflows/ci.yml`、`release.yml` 行为一致时可维护本节；流水线变更时请同步更新「四」「五」中路径说明。

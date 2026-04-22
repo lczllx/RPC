@@ -1,5 +1,7 @@
 # LCZ RPC
 
+[![CI](https://github.com/lczllx/RPC/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lczllx/RPC/actions/workflows/ci.yml)
+
 作者：lczllx  
 邮箱：2181719471@qq.com  
 GitHub：https://github.com/lczllx/RPC  
@@ -55,6 +57,9 @@ RPC 从发请求到收响应整条链路是齐的，benchmark 里对比了 JSON 
 cd RPC
 bash autobuild/quick_build.sh
 ```
+
+**Docker（可选）**  
+在仓库根（与 `Dockerfile` 同级）执行：`git submodule update --init --recursive` 后 `docker build -t lcz-rpc:local .`。详见 `rpc/docs/docker_guide.md`。
 
 完整构建（依赖检查、子模块等）：
 
