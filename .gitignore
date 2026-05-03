@@ -1,11 +1,13 @@
 # 文档目录（不提交）
-rpc/dosc/
+rpc/docs/
 gdb_debug/
+docs
 
 # 构建目录
 build/
 rpc/build/
 rpc/build-ci/
+CLAUDE.md
 
 # IDE 配置
 .vscode/

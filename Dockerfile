@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     libboost-dev \
     libjsoncpp-dev \
+    libcurl4-openssl-dev \
     protobuf-compiler \
     libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -44,6 +45,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libjsoncpp25 \
     libprotobuf23 \
+    libcurl4 \
     zlib1g \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*

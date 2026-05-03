@@ -3,6 +3,7 @@
 #include "detail.hpp"
 #include "fields.hpp"
 #include "publicconfig.hpp"
+#include "log_system/lcz_log.h"
 #include "rpc_envelope.pb.h"
 
 namespace lcz_rpc
@@ -19,7 +20,7 @@ namespace lcz_rpc
             bool ret=JSON::serialize(_data,output);
             if(!ret)
             {
-                ELOG("Serialize failed!");
+                LCZ_ERROR("Serialize failed!");
                 return "";
             }
             return output;
@@ -66,12 +67,12 @@ namespace lcz_rpc
         {
            if(!_data.isMember(KEY_RCODE))
            {
-                ELOG("Response code is not found!");
+                LCZ_ERROR("Response code is not found!");
                 return false;
            }
            if(!_data[KEY_RCODE].isIntegral())
            {
-                ELOG("Response code is not integral!");
+                LCZ_ERROR("Response code is not integral!");
                 return false;
            }
            return true;
@@ -112,13 +113,13 @@ namespace lcz_rpc
             if(_data[KEY_METHOD].isString()==false/*消息类型不为字符串*/||
             _data[KEY_METHOD].isNull()/*消息类型不能为空*/)
             {
-               ELOG("Method is not string or null!");
+               LCZ_ERROR("Method is not string or null!");
                 return false;
             }
             if(_data[KEY_PARAMS].isObject()==false/*参数类型错误*/||
             _data[KEY_PARAMS].isNull()/*参数不能为空*/)
             {
-                ELOG("Params is not object or null!");
+                LCZ_ERROR("Params is not object or null!");
                 return false;
             }
             return true;
@@ -146,12 +147,12 @@ namespace lcz_rpc
             if(_data[KEY_RCODE].isIntegral()==false||
             _data[KEY_RCODE].isNull())
             {
-                ELOG("Response code is not integral or null!");
+                LCZ_ERROR("Response code is not integral or null!");
                 return false;
             }
             if(_data[KEY_RESULT].isNull())
             {
-                ELOG("Result is null!");
+                LCZ_ERROR("Result is null!");
                 return false;
             }
             return true;
@@ -167,47 +168,47 @@ namespace lcz_rpc
             if(_data[KEY_TOPIC_KEY].isString()==false||
             _data[KEY_TOPIC_KEY].isNull())
             {
-                ELOG("主题键不是字符串或为空!");
+                LCZ_ERROR("主题键不是字符串或为空!");
                 return false;
             }
             if(_data[KEY_OPTYPE].isIntegral()==false||
             _data[KEY_OPTYPE].isNull())
             {
-                ELOG("参数不是对象或为空!");
+                LCZ_ERROR("参数不是对象或为空!");
                 return false;
             }
             if(_data[KEY_OPTYPE].asInt()==static_cast<int>(TopicOpType::PUBLISH)&&(_data[KEY_TOPIC_MSG].isString()==false||
             _data[KEY_TOPIC_MSG].isNull()))
             {
-                ELOG("主题消息不是字符串或为空!");
+                LCZ_ERROR("主题消息不是字符串或为空!");
                 return false;
             }
             switch (forwardStrategy()) {
                 case TopicForwardStrategy::FANOUT:
                     if (fanoutLimit() <= 0) 
                     {
-                        ELOG("扇出数量限制不能小于等于0!");
+                        LCZ_ERROR("扇出数量限制不能小于等于0!");
                         return false;
                     }
                     break;
                 case TopicForwardStrategy::SOURCE_HASH:
                     if (shardKey().empty()) 
                     {
-                        ELOG("源哈希键不能为空!");
+                        LCZ_ERROR("源哈希键不能为空!");
                         return false;
                     }
                     break;
                 case TopicForwardStrategy::PRIORITY:
                     if (priority() <= 0 && tags().empty()) 
                     {
-                        ELOG("优先级不能小于等于0且标签不能为空!");
+                        LCZ_ERROR("优先级不能小于等于0且标签不能为空!");
                         return false;
                     }
                     break;
                 case TopicForwardStrategy::REDUNDANT:
                     if (redundantCount() <= 1) 
                     {
-                        ELOG("冗余投递数量不能小于等于1!");
+                        LCZ_ERROR("冗余投递数量不能小于等于1!");
                         return false;
                     }
                     break;
@@ -353,13 +354,13 @@ namespace lcz_rpc
             if(_data[KEY_METHOD].isString()==false||
             _data[KEY_METHOD].isNull())
             {
-               ELOG("Method is not string or null!");
+               LCZ_ERROR("Method is not string or null!");
                 return false;
             }
             if(_data[KEY_OPTYPE].isIntegral()==false||
             _data[KEY_OPTYPE].isNull())
             {
-               ELOG("Op type is not integral or null!");
+               LCZ_ERROR("Op type is not integral or null!");
                 return false;
             }
             //不是服务发现的话，就需要提供主机信息
@@ -371,14 +372,14 @@ namespace lcz_rpc
                 _data[KEY_HOST][KEY_HOST_PORT].isIntegral()==false||
                 _data[KEY_HOST][KEY_HOST_PORT].isNull()))
             {
-                ELOG("service discover host is not object or null or ip is not string or null or port is not integral or null!");
+                LCZ_ERROR("service discover host is not object or null or ip is not string or null or port is not integral or null!");
                 return false;
             }
             if(_data[KEY_OPTYPE].asInt()==static_cast<int>(ServiceOpType::LOAD_REPORT)&&
             (_data[KEY_LOAD].isIntegral()==false||
             _data[KEY_LOAD].isNull()))
             {
-                ELOG("没有上报负载信息!");
+                LCZ_ERROR("没有上报负载信息!");
                 return false;
             }
             
@@ -418,13 +419,13 @@ namespace lcz_rpc
             if(_data[KEY_RCODE].isIntegral()==false||
             _data[KEY_RCODE].isNull())
             {
-                ELOG("Response code is not integral or null!");
+                LCZ_ERROR("Response code is not integral or null!");
                 return false;
             }
             if(_data[KEY_OPTYPE].isIntegral()==false||
             _data[KEY_OPTYPE].isNull())
             {
-                ELOG("Op type is not integral or null!");
+                LCZ_ERROR("Op type is not integral or null!");
                 return false;
             }
             if(_data[KEY_OPTYPE].asInt()==static_cast<int>(ServiceOpType::DISCOVER)&&
@@ -433,7 +434,7 @@ namespace lcz_rpc
                 _data[KEY_HOST].isArray()==false||
                 _data[KEY_HOST].isNull()))
             {
-               ELOG("service discover method is not string or null or host is not array or null!");
+               LCZ_ERROR("service discover method is not string or null or host is not array or null!");
                 return false;
             }
             return true;
@@ -526,7 +527,7 @@ namespace lcz_rpc
         virtual std::string serialize() override
         {
             if (!_envelope.SerializeToString(&_serialized)) {
-                ELOG("ProtoRpcRequest::serialize failed");
+                LCZ_ERROR("ProtoRpcRequest::serialize failed");
                 return "";
             }
             return _serialized;
@@ -534,7 +535,7 @@ namespace lcz_rpc
         virtual bool unserialize(const std::string& msg) override
         {
             if (!_envelope.ParseFromString(msg)) {
-                ELOG("ProtoRpcRequest::unserialize failed");
+                LCZ_ERROR("ProtoRpcRequest::unserialize failed");
                 return false;
             }
             return true;
@@ -542,7 +543,7 @@ namespace lcz_rpc
         virtual bool check() override
         {
             if (_envelope.method().empty()) {
-                ELOG("ProtoRpcRequest: method empty");
+                LCZ_ERROR("ProtoRpcRequest: method empty");
                 return false;
             }
             return true;
@@ -564,7 +565,7 @@ namespace lcz_rpc
         virtual std::string serialize() override
         {
             if (!_envelope.SerializeToString(&_serialized)) {
-                ELOG("ProtoRpcResponse::serialize failed");
+                LCZ_ERROR("ProtoRpcResponse::serialize failed");
                 return "";
             }
             return _serialized;
@@ -572,7 +573,7 @@ namespace lcz_rpc
         virtual bool unserialize(const std::string& msg) override
         {
             if (!_envelope.ParseFromString(msg)) {
-                ELOG("ProtoRpcResponse::unserialize failed");
+                LCZ_ERROR("ProtoRpcResponse::unserialize failed");
                 return false;
             }
             return true;
@@ -595,7 +596,7 @@ namespace lcz_rpc
         virtual std::string serialize() override
         {
             if (!_envelope.SerializeToString(&_serialized)) {
-                ELOG("ProtoTopicRequest::serialize failed");
+                LCZ_ERROR("ProtoTopicRequest::serialize failed");
                 return "";
             }
             return _serialized;
@@ -603,7 +604,7 @@ namespace lcz_rpc
         virtual bool unserialize(const std::string& msg) override
         {
             if (!_envelope.ParseFromString(msg)) {
-                ELOG("ProtoTopicRequest::unserialize failed");
+                LCZ_ERROR("ProtoTopicRequest::unserialize failed");
                 return false;
             }
             return true;
@@ -611,29 +612,29 @@ namespace lcz_rpc
         virtual bool check() override
         {
             if (_envelope.topic_key().empty()) {
-                ELOG("主题键不是字符串或为空!");
+                LCZ_ERROR("主题键不是字符串或为空!");
                 return false;
             }
             if (_envelope.optype() < 0) {
-                ELOG("参数不是对象或为空!");
+                LCZ_ERROR("参数不是对象或为空!");
                 return false;
             }
             if (static_cast<TopicOpType>(_envelope.optype()) == TopicOpType::PUBLISH && _envelope.topic_msg().empty()) {
-                ELOG("主题消息不是字符串或为空!");
+                LCZ_ERROR("主题消息不是字符串或为空!");
                 return false;
             }
             switch (forwardStrategy()) {
                 case TopicForwardStrategy::FANOUT:
-                    if (fanoutLimit() <= 0) { ELOG("扇出数量限制不能小于等于0!"); return false; }
+                    if (fanoutLimit() <= 0) { LCZ_ERROR("扇出数量限制不能小于等于0!"); return false; }
                     break;
                 case TopicForwardStrategy::SOURCE_HASH:
-                    if (shardKey().empty()) { ELOG("源哈希键不能为空!"); return false; }
+                    if (shardKey().empty()) { LCZ_ERROR("源哈希键不能为空!"); return false; }
                     break;
                 case TopicForwardStrategy::PRIORITY:
-                    if (priority() <= 0 && tags().empty()) { ELOG("优先级不能小于等于0且标签不能为空!"); return false; }
+                    if (priority() <= 0 && tags().empty()) { LCZ_ERROR("优先级不能小于等于0且标签不能为空!"); return false; }
                     break;
                 case TopicForwardStrategy::REDUNDANT:
-                    if (redundantCount() <= 1) { ELOG("冗余投递数量不能小于等于1!"); return false; }
+                    if (redundantCount() <= 1) { LCZ_ERROR("冗余投递数量不能小于等于1!"); return false; }
                     break;
                 default:
                     break;
@@ -682,7 +683,7 @@ namespace lcz_rpc
         virtual std::string serialize() override
         {
             if (!_envelope.SerializeToString(&_serialized)) {
-                ELOG("ProtoTopicResponse::serialize failed");
+                LCZ_ERROR("ProtoTopicResponse::serialize failed");
                 return "";
             }
             return _serialized;
@@ -690,7 +691,7 @@ namespace lcz_rpc
         virtual bool unserialize(const std::string& msg) override
         {
             if (!_envelope.ParseFromString(msg)) {
-                ELOG("ProtoTopicResponse::unserialize failed");
+                LCZ_ERROR("ProtoTopicResponse::unserialize failed");
                 return false;
             }
             return true;
@@ -713,7 +714,7 @@ namespace lcz_rpc
         virtual std::string serialize() override
         {
             if (!_envelope.SerializeToString(&_serialized)) {
-                ELOG("ProtoServiceRequest::serialize failed");
+                LCZ_ERROR("ProtoServiceRequest::serialize failed");
                 return "";
             }
             return _serialized;
@@ -721,7 +722,7 @@ namespace lcz_rpc
         virtual bool unserialize(const std::string& msg) override
         {
             if (!_envelope.ParseFromString(msg)) {
-                ELOG("ProtoServiceRequest::unserialize failed");
+                LCZ_ERROR("ProtoServiceRequest::unserialize failed");
                 return false;
             }
             return true;
@@ -729,16 +730,16 @@ namespace lcz_rpc
         virtual bool check() override
         {
             if (_envelope.method().empty()) {
-                ELOG("Method is not string or null!");
+                LCZ_ERROR("Method is not string or null!");
                 return false;
             }
             if (_envelope.optype() < 0) {
-                ELOG("Op type is not integral or null!");
+                LCZ_ERROR("Op type is not integral or null!");
                 return false;
             }
             if (static_cast<ServiceOpType>(_envelope.optype()) != ServiceOpType::DISCOVER) {
                 if (_envelope.host_ip().empty() || _envelope.host_port() <= 0) {
-                    ELOG("service discover host is not object or null or ip/port invalid!");
+                    LCZ_ERROR("service discover host is not object or null or ip/port invalid!");
                     return false;
                 }
             }
@@ -769,7 +770,7 @@ namespace lcz_rpc
         virtual std::string serialize() override
         {
             if (!_envelope.SerializeToString(&_serialized)) {
-                ELOG("ProtoServiceResponse::serialize failed");
+                LCZ_ERROR("ProtoServiceResponse::serialize failed");
                 return "";
             }
             return _serialized;
@@ -777,7 +778,7 @@ namespace lcz_rpc
         virtual bool unserialize(const std::string& msg) override
         {
             if (!_envelope.ParseFromString(msg)) {
-                ELOG("ProtoServiceResponse::unserialize failed");
+                LCZ_ERROR("ProtoServiceResponse::unserialize failed");
                 return false;
             }
             return true;
@@ -786,7 +787,7 @@ namespace lcz_rpc
         {
             if (static_cast<ServiceOpType>(_envelope.optype()) == ServiceOpType::DISCOVER) {
                 if (_envelope.method().empty() || _envelope.host_size() == 0) {
-                    ELOG("service discover method/host invalid!");
+                    LCZ_ERROR("service discover method/host invalid!");
                     return false;
                 }
             }
@@ -886,7 +887,7 @@ namespace lcz_rpc
                     msg = std::make_shared<ProtoServiceResponse>();
                     break;
                 default:
-                    ELOG("Invalid message type!");
+                    LCZ_ERROR("Invalid message type!");
                     return nullptr;
             }
             // 自动设置消息类型，确保 msgType 正确

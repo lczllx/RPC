@@ -8,6 +8,8 @@
 */
 #include "../general/net.hpp"
 #include "../general/message.hpp"
+#include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
 #include "../general/dispacher.hpp"
 #include<future>
 #include<functional>
@@ -45,7 +47,7 @@ namespace lcz_rpc
                 ReqDescribe::ptr req_desc=getDesc(id);
                 if(req_desc.get()==nullptr)
                 {
-                    ELOG("收到 %s 响应，但消息描述不存在",id.c_str());
+                    LCZ_ERROR("收到 %s 响应，但消息描述不存在",id.c_str());
                     return;
                 }
                 
@@ -54,7 +56,7 @@ namespace lcz_rpc
                     std::unique_lock<std::mutex> lock(_mutex);
                     if(req_desc->timeout_triggered)
                     {
-                        WLOG("收到 %s 响应，但请求已超时，忽略响应", id.c_str());
+                        LCZ_WARN("收到 %s 响应，但请求已超时，忽略响应", id.c_str());
                         delDescUnlocked(id);
                         return;
                     }
@@ -76,7 +78,7 @@ namespace lcz_rpc
                     if(req_desc->callback)req_desc->callback(msg);//回调处理
                 }
                 else{
-                    ELOG("未知请求类型");
+                    LCZ_ERROR("未知请求类型");
                 }
                 delDesc(id);//处理完删除掉这个描述信息
             }
@@ -87,7 +89,7 @@ namespace lcz_rpc
                 ReqDescribe::ptr req_desc = getDesc(req_id);
                 if(req_desc.get() == nullptr)
                 {
-                    DLOG("超时回调：请求 %s 已不存在（可能已收到响应）", req_id.c_str());
+                    LCZ_DEBUG("超时回调：请求 %s 已不存在（可能已收到响应）", req_id.c_str());
                     return;
                 }
                 
@@ -100,7 +102,7 @@ namespace lcz_rpc
                     req_desc->timeout_triggered = true;
                 }
                 
-                ELOG("请求超时: id=%s", req_id.c_str());
+                LCZ_ERROR("请求超时: id=%s", req_id.c_str());
                 
                 // 根据请求类型处理超时
                 if(req_desc->reqtype == ReqType::ASYNC)
@@ -125,14 +127,14 @@ namespace lcz_rpc
                         req_desc->response.set_value(timeout_msg);
                     } catch(...) {
                         // promise 已经被设置，说明响应已到达，忽略超时
-                        DLOG("超时处理：请求 %s 已收到响应，忽略超时", req_id.c_str());
+                        LCZ_DEBUG("超时处理：请求 %s 已收到响应，忽略超时", req_id.c_str());
                     }
                 }
                 else if(req_desc->reqtype == ReqType::CALLBACK)
                 {
                     // 回调模式：可以调用回调并传递超时错误
                     // 或者不调用，让调用方自己处理超时
-                    WLOG("回调模式请求超时: id=%s，回调不会被调用", req_id.c_str());
+                    LCZ_WARN("回调模式请求超时: id=%s，回调不会被调用", req_id.c_str());
                 }
                 
                 delDesc(req_id);
@@ -144,7 +146,7 @@ namespace lcz_rpc
                 ReqDescribe::ptr req_desc=newDesc(req,ReqType::ASYNC);
                 if(req_desc.get()==nullptr)
                 {
-                    ELOG("构造请求描述对象失败！");
+                    LCZ_ERROR("构造请求描述对象失败！");
                     return false;
                 }
                 
@@ -160,11 +162,11 @@ namespace lcz_rpc
                         std::unique_lock<std::mutex> lock(_mutex);
                         req_desc->timer_id = tid;
                     }
-                    DLOG("设置超时定时器: id=%s, timeout=%.2fs", req_id.c_str(), timeout_sec);
+                    LCZ_DEBUG("设置超时定时器: id=%s, timeout=%.2fs", req_id.c_str(), timeout_sec);
                 }
                 else
                 {
-                    WLOG("无法获取 EventLoop，超时机制不可用: id=%s", req->rid().c_str());
+                    LCZ_WARN("无法获取 EventLoop，超时机制不可用: id=%s", req->rid().c_str());
                 }
 
                 conn->send(req);//异步请求发送
@@ -175,18 +177,18 @@ namespace lcz_rpc
             bool send(const BaseConnection::ptr& conn,const BaseMessage::ptr& req,BaseMessage::ptr& resp,
                      std::chrono::milliseconds timeout = std::chrono::seconds(5))
             {
-                DLOG("Requestor sync send id=%s, timeout=%ldms", req->rid().c_str(), timeout.count());
+                LCZ_DEBUG("Requestor sync send id=%s, timeout=%ldms", req->rid().c_str(), timeout.count());
                 AsyncResponse async_resp;
                 if(send(conn,req,async_resp, timeout)==false)
                 {
-                    ELOG("Requestor sync send failed id=%s", req->rid().c_str());
+                    LCZ_ERROR("Requestor sync send failed id=%s", req->rid().c_str());
                     return false;
                 }
                 
                 // 使用 wait_for 实现超时
                 if(async_resp.wait_for(timeout) == std::future_status::timeout)
                 {
-                    ELOG("Requestor sync recv timeout id=%s", req->rid().c_str());
+                    LCZ_ERROR("Requestor sync recv timeout id=%s", req->rid().c_str());
                     // 先尝试取消 muduo 定时器，避免之后在 loop 里再触发一次 onTimeout
                     ReqDescribe::ptr desc = getDesc(req->rid());
                     if(desc)
@@ -200,7 +202,7 @@ namespace lcz_rpc
                 }
                 
                 resp=async_resp.get();
-                DLOG("Requestor sync recv id=%s", req->rid().c_str());
+                LCZ_DEBUG("Requestor sync recv id=%s", req->rid().c_str());
                 return true;
             }
             // 回调方式发送：注册回调函数，响应到达时通过 onResponse 触发 cb
@@ -209,7 +211,7 @@ namespace lcz_rpc
                 ReqDescribe::ptr req_desc=newDesc(req,ReqType::CALLBACK,cb);
                 if(req_desc.get()==nullptr)
                 {
-                    ELOG("构造请求描述对象失败！");
+                    LCZ_ERROR("构造请求描述对象失败！");
                     return false;
                 }
                 conn->send(req);
@@ -225,7 +227,7 @@ namespace lcz_rpc
                 req_desc->request=req;
                 if(req_type==ReqType::CALLBACK&&cb)req_desc->callback=cb;
                 _request_desc[req->rid()]=req_desc;
-                DLOG("newDesc add id=%s", req->rid().c_str());
+                LCZ_DEBUG("newDesc add id=%s", req->rid().c_str());
                 return req_desc;
             }
             // 根据请求 id 从映射表查找对应的请求描述

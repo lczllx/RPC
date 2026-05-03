@@ -3,7 +3,7 @@
 #include <thread>
 void onrpcResponse(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcResponse::ptr& msg)
 {
-    DLOG("收到rpc响应");
+    LCZ_DEBUG("收到rpc响应");
     std::string msg_str = msg->serialize();
     std::cout << msg_str << std::endl;
    
@@ -12,7 +12,7 @@ void onrpcResponse(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcResponse
 }
 void ontopicResponse(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::TopicResponse::ptr& msg)
 {
-    DLOG("收到topic响应");
+    LCZ_DEBUG("收到topic响应");
 
     std::string msg_str = msg->serialize();
     std::cout << msg_str << std::endl;

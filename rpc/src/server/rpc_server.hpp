@@ -5,11 +5,14 @@
 #include "../client/rpc_client.hpp"
 #include "rpc_topic.hpp"
 #include "../general/net.hpp"
+#include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
+#include "memory_registry_store.hpp"
+#include "etcd_registry_store.hpp"
 #include <atomic>//原子操作
+#include <cstdlib>
 #include <iostream>
 #include <thread>//线程支持
-#include "../general/publicconfig.hpp"
-
 namespace lcz_rpc
 {
     namespace server
@@ -20,7 +23,7 @@ namespace lcz_rpc
         public:
             using ptr = std::shared_ptr<RegistryServer>;
             RegistryServer(int port)
-                : _pdmanager(std::make_shared<PwithDManager>())
+                : _pdmanager(makePdmanager())
                 , _dispacher(std::make_shared<Dispacher>())
             {
                 auto service_cb = std::bind(&PwithDManager::onserviceRequest, _pdmanager.get(), std::placeholders::_1, std::placeholders::_2);
@@ -34,17 +37,15 @@ namespace lcz_rpc
                 //启动心跳扫描定时器
                 _hb_loop_ptr = _hb_loop.startLoop();//启动心跳扫描线程的事件循环
                 _hb_loop_ptr->runEvery(_hb_config.check_interval_sec, [this]() {
-                    ILOG("[RegistryServer-服务扫描] 开始扫描过期提供者，idle_timeout=%d秒", 
+                    LCZ_INFO("[RegistryServer-服务扫描] 开始扫描过期提供者，idle_timeout=%d秒", 
                          _hb_config.idle_timeout_sec);
                     auto expired = _pdmanager->sweepAndNotify(_hb_config.idle_timeout_sec);
                     if (!expired.empty()) {
-                        ILOG("[RegistryServer-服务扫描] 发现 %zu 个过期提供者，已通知下线", expired.size());
-                        // 不依赖日志宏等级，便于演示
+                        LCZ_INFO("[RegistryServer-服务扫描] 发现 %zu 个过期提供者，已通知下线", expired.size());
                         for (const auto &pr : expired) {
-                            std::cout << "[Registry] 剔除过期提供者 method=" << pr.first
-                                      << " host=" << pr.second.first << ":" << pr.second.second
-                                      << " (idle>" << _hb_config.idle_timeout_sec << "s)"
-                                      << std::endl;
+                            LCZ_INFO("[Registry] 剔除过期提供者 method=%s host=%s:%d (idle>%ds)",
+                                     pr.first.c_str(), pr.second.first.c_str(), pr.second.second,
+                                     _hb_config.idle_timeout_sec);
                         }
                     }
                 });
@@ -56,12 +57,27 @@ namespace lcz_rpc
             }
 
         private:
+            // 根据环境变量 LCZ_ETCD 选择存储后端
+            static PwithDManager::ptr makePdmanager()
+            {
+                const char *etcd_url = std::getenv("LCZ_ETCD");//获取LCZ_ETCD这个环境变量的值
+                if (etcd_url && etcd_url[0] != '\0')
+                {
+                    LCZ_INFO("[Registry] 使用 Etcd 存储后端，etcd=%s", etcd_url);
+                    return std::make_shared<PwithDManager>(
+                        std::make_shared<EtcdRegistryStore>(etcd_url));
+                }
+                LCZ_INFO("[Registry] 使用内存存储后端");
+                return std::make_shared<PwithDManager>(
+                    std::make_shared<MemoryRegistryStore>());
+            }
+
             // 连接关闭时清理 provider/discoverer
             void onconnShoutdown(const BaseConnection::ptr &conn)
             {
                 // demo 友好输出：Provider 进程退出/断开时，注册中心会立即感知连接断开
-                // 注意：这种“即时下线”不会走超时扫描剔除逻辑
-                std::cout << "[Registry] 连接断开，触发下线处理" << std::endl;
+                // 注意：这种"即时下线"不会走超时扫描剔除逻辑
+                LCZ_INFO("[Registry] 连接断开，触发下线处理");
                 _pdmanager->onconnShoutdown(conn);
             }
 
@@ -117,18 +133,16 @@ namespace lcz_rpc
                     {
                         ok = _client_registry->methodRegistry(service->getMethodname(), _access_addr, currentLoad);
                         if (ok) break;
-                        std::cout << "[Provider] 注册到 Registry 失败，method=" << service->getMethodname()
-                                  << " host=" << _access_addr.first << ":" << _access_addr.second
-                                  << " attempt=" << attempt << "/3"
-                                  << std::endl;
+                        LCZ_WARN("[Provider] 注册到 Registry 失败，method=%s host=%s:%d attempt=%d/3",
+                                 service->getMethodname().c_str(), _access_addr.first.c_str(),
+                                 _access_addr.second, attempt);
                         std::this_thread::sleep_for(std::chrono::seconds(1));
                     }
                     if(ok)
                     {
-                        std::cout << "[Provider] 注册成功 method=" << service->getMethodname()
-                                  << " host=" << _access_addr.first << ":" << _access_addr.second
-                                  << " load=" << currentLoad
-                                  << std::endl;
+                        LCZ_INFO("[Provider] 注册成功 method=%s host=%s:%d load=%d",
+                                 service->getMethodname().c_str(), _access_addr.first.c_str(),
+                                 _access_addr.second, currentLoad);
                         {
                             std::unique_lock<std::mutex>lock(_methods_mutex);
                             _registered_methods.emplace_back(service->getMethodname());
@@ -147,9 +161,9 @@ namespace lcz_rpc
                     }
                     else
                     {
-                        std::cout << "[Provider] 注册到 Registry 最终失败，method=" << service->getMethodname()
-                                  << " host=" << _access_addr.first << ":" << _access_addr.second
-                                  << std::endl;
+                        LCZ_ERROR("[Provider] 注册到 Registry 最终失败，method=%s host=%s:%d",
+                                  service->getMethodname().c_str(), _access_addr.first.c_str(),
+                                  _access_addr.second);
                     }
 
                 }
@@ -170,13 +184,13 @@ namespace lcz_rpc
             void startInThread() 
             { 
                 if (_server_thread.joinable()) {
-                    WLOG("RpcServer 已经在运行中");
+                    LCZ_WARN("RpcServer 已经在运行中");
                     return;
                 }
                 _server_thread = std::thread([this]() {
                     _server->start();  // 在单独线程中阻塞运行
                 });
-                ILOG("RpcServer 已在后台线程启动，主线程可继续调用 registerMethod()");
+                LCZ_INFO("RpcServer 已在后台线程启动，主线程可继续调用 registerMethod()");
             }
             
             // 等待 startInThread 启动的线程结束
@@ -217,7 +231,7 @@ namespace lcz_rpc
                 }
                 for (const auto &method : methods) {
                     if (!_client_registry->reportLoad(method, _access_addr, load)) {
-                        WLOG("reportLoad 失败: method=%s", method.c_str());
+                        LCZ_WARN("reportLoad 失败: method=%s", method.c_str());
                     }
                 }
             }
@@ -230,12 +244,12 @@ namespace lcz_rpc
                     std::unique_lock<std::mutex> lock(_methods_mutex);
                     methods = _registered_methods;//获取已注册的方法
                 }
-                ILOG("[RpcServer-Provider心跳定时器] 开始发送心跳，method数量=%zu", methods.size());
+                LCZ_INFO("[RpcServer-Provider心跳定时器] 开始发送心跳，method数量=%zu", methods.size());
                 //遍历已注册的方法，发送心跳给注册中心
                 for (const auto &method : methods) {
                     //发送心跳给注册中心
                     if (!_client_registry->heartbeatProvider(method, _access_addr)) {
-                        WLOG("[RpcServer-Provider心跳失败] method=%s", method.c_str());
+                        LCZ_WARN("[RpcServer-Provider心跳失败] method=%s", method.c_str());
                     }
                 }
             }

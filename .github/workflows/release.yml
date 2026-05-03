@@ -41,6 +41,7 @@ jobs:
             make \
             libboost-dev \
             libjsoncpp-dev \
+            libcurl4-openssl-dev \
             protobuf-compiler \
             libprotobuf-dev \
             libgtest-dev \

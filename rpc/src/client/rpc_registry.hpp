@@ -4,6 +4,7 @@
 #include <random>
 #include <chrono> 
 #include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
 
 static constexpr int MAX_IDX = 1000000000; //最大索引
 
@@ -159,23 +160,23 @@ namespace lcz_rpc
                 msg_req->setOptype(ServiceOpType::REGISTER);
                 msg_req->setLoad(load);
                 BaseMessage::ptr msg_resp;
-                DLOG("methodRegistry send begin:%s -> %s:%d", method.c_str(), host.first.c_str(), host.second);
+                LCZ_DEBUG("methodRegistry send begin:%s -> %s:%d", method.c_str(), host.first.c_str(), host.second);
                 bool ret = _requestor->send(conn, msg_req, msg_resp);
                 if (!ret)
                 {
-                    ELOG("服务注册失败:%s", method.c_str());
+                    LCZ_ERROR("服务注册失败:%s", method.c_str());
                     return false;
                 }
-                DLOG("methodRegistry send finish:%s", method.c_str());
+                LCZ_DEBUG("methodRegistry send finish:%s", method.c_str());
                 auto service_resp = std::dynamic_pointer_cast<ServiceResponse>(msg_resp);
                 if (service_resp.get() == nullptr)
                 {
-                    ELOG("向下转换失败");
+                    LCZ_ERROR("向下转换失败");
                     return false;
                 }
                 if (service_resp->rcode() != RespCode::SUCCESS)
                 {
-                    ELOG("注册失败:%s", errReason(service_resp->rcode()).c_str());
+                    LCZ_ERROR("注册失败:%s", errReason(service_resp->rcode()).c_str());
                     return false;
                 }
                
@@ -195,19 +196,19 @@ namespace lcz_rpc
                 bool ret = _requestor->send(conn, msg_req, msg_resp);//上报信息给服务端
                 if (!ret)
                 {
-                    ELOG("上报负载失败:%s", method.c_str());
+                    LCZ_ERROR("上报负载失败:%s", method.c_str());
                     return false;
                 }
               
                 auto service_resp = std::dynamic_pointer_cast<ServiceResponse>(msg_resp);
                 if (service_resp.get() == nullptr)
                 {
-                    ELOG("向下转换失败");
+                    LCZ_ERROR("向下转换失败");
                     return false;
                 }
                 if (service_resp->rcode() != RespCode::SUCCESS)
                 {
-                    ELOG("负载上报失败:%s", service_resp ? errReason(service_resp->rcode()).c_str(): "响应类型非法");
+                    LCZ_ERROR("负载上报失败:%s", service_resp ? errReason(service_resp->rcode()).c_str(): "响应类型非法");
                     return false;
                 }
                
@@ -218,7 +219,7 @@ namespace lcz_rpc
             bool heartbeatProvider(const BaseConnection::ptr &conn,
                 const std::string &method, const HostInfo &host)
             {
-                ILOG("[Provider心跳-发送] method=%s host=%s:%d", method.c_str(), host.first.c_str(), host.second);
+                LCZ_INFO("[Provider心跳-发送] method=%s host=%s:%d", method.c_str(), host.first.c_str(), host.second);
                 auto msg_req = MessageFactory::create<ServiceRequest>();
                 msg_req->setId(uuid());
                 msg_req->setMethod(method);
@@ -227,14 +228,14 @@ namespace lcz_rpc
                 msg_req->setOptype(ServiceOpType::HEARTBEAT_PROVIDER);
                 BaseMessage::ptr msg_resp;
                 bool ret = _requestor->send(conn, msg_req, msg_resp);
-                if (!ret) { ELOG("[Provider心跳-发送失败] method=%s", method.c_str()); return false; }
+                if (!ret) { LCZ_ERROR("[Provider心跳-发送失败] method=%s", method.c_str()); return false; }
                 auto resp = std::dynamic_pointer_cast<ServiceResponse>(msg_resp);
                 if (!resp || resp->rcode() != RespCode::SUCCESS)
                 {
-                    ELOG("[Provider心跳-响应失败] method=%s reason=%s", method.c_str(), resp ? errReason(resp->rcode()).c_str() : "响应类型非法");
+                    LCZ_ERROR("[Provider心跳-响应失败] method=%s reason=%s", method.c_str(), resp ? errReason(resp->rcode()).c_str() : "响应类型非法");
                     return false;
                 }
-                ILOG("[Provider心跳-成功] method=%s host=%s:%d", method.c_str(), host.first.c_str(), host.second);
+                LCZ_INFO("[Provider心跳-成功] method=%s host=%s:%d", method.c_str(), host.first.c_str(), host.second);
                 return true;
             }
         private:
@@ -302,7 +303,7 @@ namespace lcz_rpc
                     if (it != _method_host.end())
                     {
                         detail = it->second->selectHost(strategy);
-                        ILOG("[discover-cache] method=%s strategy=%d host=%s:%d load=%d",
+                        LCZ_INFO("[discover-cache] method=%s strategy=%d host=%s:%d load=%d",
                             method.c_str(),
                             static_cast<int>(strategy),
                             detail.host.first.c_str(),
@@ -322,22 +323,22 @@ namespace lcz_rpc
                 bool ret = _requestor->send(conn, msg_req, msg_resp);
                 if (!ret)
                 {
-                    ELOG("服务发现失败:%s", method.c_str());
+                    LCZ_ERROR("服务发现失败:%s", method.c_str());
                     return false;
                 }
                 auto service_resp = std::dynamic_pointer_cast<ServiceResponse>(msg_resp);
                 if (service_resp.get() == nullptr)
                 {
-                    ELOG("向下转换失败");
+                    LCZ_ERROR("向下转换失败");
                     return false;
                 }
                 if (service_resp->rcode() != RespCode::SUCCESS)
                 {
-                    ELOG("服务发现失败:%s", errReason(service_resp->rcode()).c_str());
+                    LCZ_ERROR("服务发现失败:%s", errReason(service_resp->rcode()).c_str());
                     return false;
                 }
                 auto details = service_resp->hostsDetail(); // 注意这里
-                 if (details.empty()) { ELOG("服务发现失败，没有提供 %s 服务的主机", method.c_str()); return false; }
+                 if (details.empty()) { LCZ_ERROR("服务发现失败，没有提供 %s 服务的主机", method.c_str()); return false; }
                  
                  auto method_host = std::make_shared<MethodHost>();
                  for (const auto &detail : details) {
@@ -345,7 +346,7 @@ namespace lcz_rpc
                  }
                  detail=method_host->selectHost(strategy);
                  _method_host[method]=method_host; // 缓存新获取的主机列表以供后续复用
-                 ILOG("[discover-cache] method=%s host=%s:%d load=%d",
+                 LCZ_INFO("[discover-cache] method=%s host=%s:%d load=%d",
                     method.c_str(),
                     detail.host.first.c_str(),
                     detail.host.second,

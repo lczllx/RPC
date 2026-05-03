@@ -36,6 +36,17 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
 
+    services:
+      etcd:
+        image: bitnamilegacy/etcd:3.5
+        env:
+          ALLOW_NONE_AUTHENTICATION: "yes"
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
+        ports:
+          - 2379:2379
+        options: --health-cmd="etcdctl endpoint health" --health-interval=5s --health-timeout=3s --health-retries=5
+
     steps:
       # v6 使用 Node 24 运行时，避免 “Node.js 20 deprecated” 的 Annotation 警告（该警告本身不会导致失败）
       - name: Checkout repository
@@ -55,6 +66,7 @@ jobs:
             make \
             libboost-dev \
             libjsoncpp-dev \
+            libcurl4-openssl-dev \
             protobuf-compiler \
             libprotobuf-dev \
             libgtest-dev
@@ -89,6 +101,8 @@ jobs:
 
       - name: Run unit tests
         working-directory: rpc/build
+        env:
+          LCZ_ETCD: http://localhost:2379
         run: ./tests/lcz_rpc_unit_tests
 
   # 验证仓库根 Dockerfile 能构建（与上面并行，不推镜像到仓库）

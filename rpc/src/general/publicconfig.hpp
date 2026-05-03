@@ -1,5 +1,8 @@
 #pragma once
 #include <chrono>
+#include<cstdint>
+#include<string>
+#include<utility>
 namespace lcz_rpc
 {
     typedef std::pair<std::string,int32_t> HostInfo;//主机信息

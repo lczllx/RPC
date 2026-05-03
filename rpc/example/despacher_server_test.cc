@@ -4,7 +4,7 @@
 
 void onrpcRequst(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcRequest::ptr& msg)
 {
-    DLOG("收到rpc请求，%s,\n",msg->method().c_str());
+    LCZ_DEBUG("收到rpc请求，%s,",msg->method().c_str());
     std::string msg_str = msg->serialize();
     std::cout << msg_str << std::endl;
     //创建rpc响应
@@ -18,7 +18,7 @@ void onrpcRequst(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::RpcRequest::p
 }
 void ontopicRequst(const lcz_rpc::BaseConnection::ptr& conn,lcz_rpc::TopicRequest::ptr& msg)
 {
-    DLOG("收到topic请求,%s,\n",msg->method().c_str());
+    LCZ_DEBUG("收到topic请求,%s,",msg->method().c_str());
 
     std::string msg_str = msg->serialize();
     std::cout << msg_str << std::endl;

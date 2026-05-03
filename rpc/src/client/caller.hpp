@@ -1,6 +1,7 @@
 #pragma once
 #include "requestor.hpp"
 #include "../general/message.hpp"
+#include "../general/log_system/lcz_log.h"
 #include <future>
 #include <functional>
 
@@ -22,7 +23,7 @@ namespace lcz_rpc
             // 同步 RPC：阻塞等待响应，结果写入 result
             bool call(const BaseConnection::ptr& conn,const std::string& method_name,const Json::Value& params,Json::Value& result)
             {
-                DLOG("RpcCaller sync call method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller sync call method=%s", method_name.c_str());
                 RpcRequest::ptr req_msg=MessageFactory::create<RpcRequest>();
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC);
@@ -30,24 +31,24 @@ namespace lcz_rpc
                 req_msg->setParams(params);
                 BaseMessage::ptr resp_msg;
                 bool ret= _requestor->send(conn,std::dynamic_pointer_cast<BaseMessage>(req_msg),resp_msg);
-                if(!ret){ELOG("rpc同步请求失败");return false;}
+                if(!ret){LCZ_ERROR("rpc同步请求失败");return false;}
                 RpcResponse::ptr rpc_respmsg=std::dynamic_pointer_cast<RpcResponse>(resp_msg);
                 if(rpc_respmsg.get()==nullptr)
                 {
-                ELOG("类型向下转换失败失败");return false; 
+                LCZ_ERROR("类型向下转换失败失败");return false; 
                 }
                 if(rpc_respmsg->rcode()!=RespCode::SUCCESS)
                 {
-                    ELOG("rpc请求出错：%s",errReason(rpc_respmsg->rcode()).c_str());return false; 
+                    LCZ_ERROR("rpc请求出错：%s",errReason(rpc_respmsg->rcode()).c_str());return false; 
                 }
                 result=rpc_respmsg->result();
-                DLOG("RpcCaller sync call finish method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller sync call finish method=%s", method_name.c_str());
                 return true;
             }
             // 异步 RPC：通过 result future 获取结果
             bool call(const BaseConnection::ptr& conn, const std::string& method_name,Json::Value& params,RpcAsyncRespose& result)
             {
-                DLOG("RpcCaller future call method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller future call method=%s", method_name.c_str());
                 //向服务端发送异步回调请求，设置回调函数，在回调 函数中对pomise设置数据
                 auto req_msg=MessageFactory::create<RpcRequest>();
                 req_msg->setId(uuid());
@@ -61,7 +62,7 @@ namespace lcz_rpc
 
                 Requestor::ReqCallback cb=std::bind(&RpcCaller::callBack,this,json_pomise,std::placeholders::_1);
                 bool ret= _requestor->send(conn,std::dynamic_pointer_cast<BaseMessage>(req_msg),cb);
-                if(!ret){ELOG("rpc异步请求失败");return false;}
+                if(!ret){LCZ_ERROR("rpc异步请求失败");return false;}
 
                 return true;
 
@@ -69,7 +70,7 @@ namespace lcz_rpc
             // 回调式 RPC：响应到达时调用 cb
             bool call(const BaseConnection::ptr& conn, const std::string& method_name,Json::Value& params,const ResponseCallback& cb)
             {
-                DLOG("RpcCaller callback call method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller callback call method=%s", method_name.c_str());
                 auto req_msg=MessageFactory::create<RpcRequest>();
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC);
@@ -79,7 +80,7 @@ namespace lcz_rpc
                
                 Requestor::ReqCallback reqcb=std::bind(&RpcCaller::callBackself,this,cb,std::placeholders::_1);
                 bool ret= _requestor->send(conn,std::dynamic_pointer_cast<BaseMessage>(req_msg),reqcb);
-                if(!ret){ELOG("rpc回调请求失败");return false;}
+                if(!ret){LCZ_ERROR("rpc回调请求失败");return false;}
 
                 return true;
             }
@@ -90,11 +91,11 @@ namespace lcz_rpc
                 RpcResponse::ptr rpc_respmsg=std::dynamic_pointer_cast<RpcResponse>(msg);
                 if(rpc_respmsg.get()==nullptr)
                 {
-                ELOG("类型向下转换失败失败");return ; 
+                LCZ_ERROR("类型向下转换失败失败");return ; 
                 }
                 if(rpc_respmsg->rcode()!=RespCode::SUCCESS)
                 {
-                    ELOG("rpc异步出错：%s",errReason(rpc_respmsg->rcode()).c_str());return; 
+                    LCZ_ERROR("rpc异步出错：%s",errReason(rpc_respmsg->rcode()).c_str());return; 
                 }
                 result->set_value(rpc_respmsg->result());//被触发时设置结果
             }
@@ -104,11 +105,11 @@ namespace lcz_rpc
                 RpcResponse::ptr rpc_respmsg=std::dynamic_pointer_cast<RpcResponse>(msg);
                 if(rpc_respmsg.get()==nullptr)
                 {
-                ELOG("类型向下转换失败失败");return ; 
+                LCZ_ERROR("类型向下转换失败失败");return ; 
                 }
                 if(rpc_respmsg->rcode()!=RespCode::SUCCESS)
                 {
-                    ELOG("rpc回调出错：%s",errReason(rpc_respmsg->rcode()).c_str());return; 
+                    LCZ_ERROR("rpc回调出错：%s",errReason(rpc_respmsg->rcode()).c_str());return; 
                 }
                 cb(rpc_respmsg->result());//使用回调处理结果
             }
@@ -121,37 +122,37 @@ namespace lcz_rpc
                            const Req& req, Resp* resp,
                            std::chrono::milliseconds timeout = std::chrono::seconds(5))
             {
-                DLOG("RpcCaller call_proto sync method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller call_proto sync method=%s", method_name.c_str());
                 auto req_msg = MessageFactory::create<ProtoRpcRequest>();
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC_PROTO);
                 req_msg->setMethod(method_name);
                 std::string body;
                 if (!req.SerializeToString(&body)) {
-                    ELOG("call_proto: Req::SerializeToString failed");
+                    LCZ_ERROR("call_proto: Req::SerializeToString failed");
                     return false;
                 }
                 req_msg->setBody(body);
 
                 BaseMessage::ptr resp_msg;
                 if (!_requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(req_msg), resp_msg, timeout)) {
-                    ELOG("call_proto sync send failed");
+                    LCZ_ERROR("call_proto sync send failed");
                     return false;
                 }
                 auto proto_resp = std::dynamic_pointer_cast<ProtoRpcResponse>(resp_msg);
                 if (!proto_resp) {
-                    ELOG("call_proto: response type not ProtoRpcResponse");
+                    LCZ_ERROR("call_proto: response type not ProtoRpcResponse");
                     return false;
                 }
                 if (proto_resp->rcode() != RespCode::SUCCESS) {
-                    ELOG("call_proto error: %s", errReason(proto_resp->rcode()).c_str());
+                    LCZ_ERROR("call_proto error: %s", errReason(proto_resp->rcode()).c_str());
                     return false;
                 }
                 if (!resp->ParseFromString(proto_resp->body())) {
-                    ELOG("call_proto: Resp::ParseFromString failed");
+                    LCZ_ERROR("call_proto: Resp::ParseFromString failed");
                     return false;
                 }
-                DLOG("RpcCaller call_proto sync finish method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller call_proto sync finish method=%s", method_name.c_str());
                 return true;
             }
 
@@ -161,14 +162,14 @@ namespace lcz_rpc
                            const Req& req, std::future<Resp>* out_future,
                            std::chrono::milliseconds timeout = std::chrono::seconds(5))
             {
-                DLOG("RpcCaller call_proto async method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller call_proto async method=%s", method_name.c_str());
                 auto req_msg = MessageFactory::create<ProtoRpcRequest>();
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC_PROTO);
                 req_msg->setMethod(method_name);
                 std::string body;
                 if (!req.SerializeToString(&body)) {
-                    ELOG("call_proto async: Req::SerializeToString failed");
+                    LCZ_ERROR("call_proto async: Req::SerializeToString failed");
                     return false;
                 }
                 req_msg->setBody(body);
@@ -178,7 +179,7 @@ namespace lcz_rpc
                 Requestor::ReqCallback cb = [prom](const BaseMessage::ptr& msg) {
                     auto pr = std::dynamic_pointer_cast<ProtoRpcResponse>(msg);
                     if (!pr) {
-                        ELOG("call_proto async: response type not ProtoRpcResponse");
+                        LCZ_ERROR("call_proto async: response type not ProtoRpcResponse");
                         prom->set_exception(std::make_exception_ptr(std::runtime_error("invalid response type")));
                         return;
                     }
@@ -194,7 +195,7 @@ namespace lcz_rpc
                     prom->set_value(std::move(r));
                 };
                 if (!_requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(req_msg), cb)) {
-                    ELOG("call_proto async send failed");
+                    LCZ_ERROR("call_proto async send failed");
                     return false;
                 }
                 return true;
@@ -206,14 +207,14 @@ namespace lcz_rpc
                            const Req& req, std::function<void(const Resp&)> on_success,
                            std::function<void(RespCode)> on_error = nullptr)
             {
-                DLOG("RpcCaller call_proto callback method=%s", method_name.c_str());
+                LCZ_DEBUG("RpcCaller call_proto callback method=%s", method_name.c_str());
                 auto req_msg = MessageFactory::create<ProtoRpcRequest>();
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC_PROTO);
                 req_msg->setMethod(method_name);
                 std::string body;
                 if (!req.SerializeToString(&body)) {
-                    ELOG("call_proto callback: Req::SerializeToString failed");
+                    LCZ_ERROR("call_proto callback: Req::SerializeToString failed");
                     if (on_error) on_error(RespCode::INVALID_MSG);
                     return false;
                 }
@@ -222,7 +223,7 @@ namespace lcz_rpc
                 Requestor::ReqCallback cb = [on_success, on_error](const BaseMessage::ptr& msg) {
                     auto pr = std::dynamic_pointer_cast<ProtoRpcResponse>(msg);
                     if (!pr) {
-                        ELOG("call_proto callback: response type not ProtoRpcResponse");
+                        LCZ_ERROR("call_proto callback: response type not ProtoRpcResponse");
                         if (on_error) on_error(RespCode::INVALID_MSG);
                         return;
                     }

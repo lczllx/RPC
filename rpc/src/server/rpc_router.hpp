@@ -3,6 +3,7 @@
 #include "../general/message.hpp"
 #include "../general/dispacher.hpp"
 #include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
 #include <google/protobuf/message_lite.h>
 
 /*服务端对rpc请求的处理
@@ -39,12 +40,12 @@ namespace lcz_rpc{
                 {
                     if(params.isMember(desc.first)==false)
                     {
-                        ELOG("字段 %s 校验失败",desc.first.c_str());
+                        LCZ_ERROR("字段 %s 校验失败",desc.first.c_str());
                         return false;
                     }
                     if(check(desc.second,params[desc.first])==false)
                     {
-                        ELOG("类型 %s 校验失败",desc.first.c_str());
+                        LCZ_ERROR("类型 %s 校验失败",desc.first.c_str());
                         return false;
                     }
                 }
@@ -56,7 +57,7 @@ namespace lcz_rpc{
                 _service_cb(param,result);
                 if(check_return_ty(result)==false)
                 {
-                    ELOG("回调 函数中的处理结果校验失败");
+                    LCZ_ERROR("回调 函数中的处理结果校验失败");
                     return false;
                 }
                 return true;
@@ -163,26 +164,26 @@ namespace lcz_rpc{
             // 处理 RPC 请求：查找服务、校验参数、调用回调、返回响应
             void onrpcRequst(const BaseConnection::ptr& conn,RpcRequest::ptr& req)
             {
-                DLOG("RpcRouter recv method=%s", req->method().c_str());
+                LCZ_DEBUG("RpcRouter recv method=%s", req->method().c_str());
                 auto service=_manager->select(req->method());
                 if(service.get()==nullptr)
                 {
-                    ELOG("服务不存在,method:%s",req->method().c_str());
+                    LCZ_ERROR("服务不存在,method:%s",req->method().c_str());
                     return response(conn,req,Json::Value(),RespCode::SERVICE_NOT_FOUND);
                 }
                 if(service->checkParams(req->params())==false)
                 {
-                     ELOG("参数校验失败,method:%s",req->method().c_str());
+                     LCZ_ERROR("参数校验失败,method:%s",req->method().c_str());
                     return response(conn,req,Json::Value(),RespCode::INVALID_PARAMS);
                 }
                 Json::Value result;
                 bool ret=service->call(req->params(),result);
                 if(ret==false)
                 {
-                    ELOG("这里应该是服务调用失败,method:%s",req->method().c_str());
+                    LCZ_ERROR("这里应该是服务调用失败,method:%s",req->method().c_str());
                     return response(conn,req,Json::Value(),RespCode::INTERNAL_ERROR);
                 }
-                DLOG("RpcRouter respond method=%s", req->method().c_str());
+                LCZ_DEBUG("RpcRouter respond method=%s", req->method().c_str());
                 return response(conn,req,result,RespCode::SUCCESS);
             }
             // 向路由器注册 RPC 方法
@@ -212,10 +213,10 @@ namespace lcz_rpc{
                 const std::string& method = req->method();
                 const std::string& body = req->body();
                 const std::string& req_id = req->rid();
-                DLOG("ProtoRpcRouter recv method=%s", method.c_str());
+                LCZ_DEBUG("ProtoRpcRouter recv method=%s", method.c_str());
                 auto it = _handlers.find(method);
                 if (it == _handlers.end()) {
-                    ELOG("Proto method not found: %s", method.c_str());
+                    LCZ_ERROR("Proto method not found: %s", method.c_str());
                     sendProtoResponse(conn, req_id, RespCode::SERVICE_NOT_FOUND, "");
                     return;
                 }
@@ -231,7 +232,7 @@ namespace lcz_rpc{
                     const std::string& body, const std::string& req_id) {
                     Req req;
                     if (!req.ParseFromString(body)) {
-                        ELOG("ProtoRpcRouter: ParseFromString failed method=%s", method_copy.c_str());
+                        LCZ_ERROR("ProtoRpcRouter: ParseFromString failed method=%s", method_copy.c_str());
                         sendProtoResponse(conn, req_id, RespCode::PARSE_FAILED, "");
                         return;
                     }
@@ -239,17 +240,17 @@ namespace lcz_rpc{
                     try {
                         handler(conn, req, &resp);
                     } catch (const std::exception& e) {
-                        ELOG("ProtoRpcRouter handler exception method=%s: %s", method_copy.c_str(), e.what());
+                        LCZ_ERROR("ProtoRpcRouter handler exception method=%s: %s", method_copy.c_str(), e.what());
                         sendProtoResponse(conn, req_id, RespCode::INTERNAL_ERROR, "");
                         return;
                     } catch (...) {
-                        ELOG("ProtoRpcRouter handler unknown exception method=%s", method_copy.c_str());
+                        LCZ_ERROR("ProtoRpcRouter handler unknown exception method=%s", method_copy.c_str());
                         sendProtoResponse(conn, req_id, RespCode::INTERNAL_ERROR, "");
                         return;
                     }
                     std::string resp_body;
                     if (!resp.SerializeToString(&resp_body)) {
-                        ELOG("ProtoRpcRouter: SerializeToString failed");
+                        LCZ_ERROR("ProtoRpcRouter: SerializeToString failed");
                         sendProtoResponse(conn, req_id, RespCode::INTERNAL_ERROR, "");
                         return;
                     }

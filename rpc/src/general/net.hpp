@@ -1,7 +1,9 @@
 #pragma once
 
+#include <memory>
 #include <mutex>
 #include <unordered_map>
+#include "log_system/lcz_log.h"
 
 // muduo 网络库头文件
 #include <muduo/net/TcpServer.h>//tcp服务器 
@@ -104,9 +106,9 @@ namespace lcz_rpc
             std::string id=buf->retrieveAsString(id_len);     
             std::string data=buf->retrieveAsString(data_len);
             msg=MessageFactory::create(msgtype);
-            if(msg.get()==nullptr){ELOG("创建消息失败");return false;}
+            if(msg.get()==nullptr){LCZ_ERROR("创建消息失败");return false;}
             bool ret=msg->unserialize(data);//反序列化数据
-            if(!ret){ELOG("反序列化数据失败");return false;}
+            if(!ret){LCZ_ERROR("反序列化数据失败");return false;}
             msg->setId(id);
             msg->setMsgType(msgtype);
             return true;
@@ -116,7 +118,7 @@ namespace lcz_rpc
           {
             //len msgtype idlen id data
             std::string data=msg->serialize();//序列化数据
-            if(data.empty()){ELOG("序列化数据失败");return "";}    
+            if(data.empty()){LCZ_ERROR("序列化数据失败");return "";}    
             std::string id=msg->rid();
 
             //获取消息类型和ID长度和数据长度
@@ -225,7 +227,7 @@ namespace lcz_rpc
             {
               if(conn->connected())
               {
-               DLOG("新连接建立");
+               LCZ_DEBUG("新连接建立");
                auto muduo_conn=ConnectionFactory::create(conn,_protocol);
                {
                   std::unique_lock<std::mutex> lock(_mutex);
@@ -235,7 +237,7 @@ namespace lcz_rpc
               }
               else
               {
-                 DLOG("连接断开");
+                 LCZ_DEBUG("连接断开");
                  BaseConnection::ptr muduo_conn;
                  {                
                      std::unique_lock<std::mutex> lock(_mutex);
@@ -258,11 +260,11 @@ namespace lcz_rpc
               {
                  if(_protocol->canProcessed(base_buf)==false)
                  {
-                    DLOG("数据不完整，继续等待");
+                    LCZ_DEBUG("数据不完整，继续等待");
                     if(base_buf->readableSize()>_maxdatalen)
                     {
                      conn->shutdown();
-                       ELOG("数据长度超过最大值");
+                       LCZ_ERROR("数据长度超过最大值");
                        return;
                     }
                     break;
@@ -272,10 +274,10 @@ namespace lcz_rpc
                bool ret = _protocol->onMessage(base_buf, msg);
                if (ret == false) {
                conn->shutdown();
-               ELOG("缓冲区中数据错误！");
+               LCZ_ERROR("缓冲区中数据错误！");
                return ;
                }
-               //DLOG("消息反序列化成功！")
+               //LCZ_DEBUG("消息反序列化成功！")
                BaseConnection::ptr base_conn;
                {
                std::unique_lock<std::mutex> lock(_mutex);
@@ -286,7 +288,7 @@ namespace lcz_rpc
                }
                base_conn = it->second;
                }
-               //DLOG("调⽤回调函数进⾏消息处理！");
+               //LCZ_DEBUG("调⽤回调函数进⾏消息处理！");
                if (_cb_message) _cb_message(base_conn, msg);
               }
            }
@@ -317,19 +319,19 @@ namespace lcz_rpc
             MuduoClient(const std::string& sip,const int sport)
             :_protocol(ProtocolFactory::create())
             ,_baceloop(_loopthread.startLoop())  // 独立的事件循环线程
-            ,_downlatch(1)
+            ,_downlatch(new muduo::CountDownLatch(1))
             ,_client(_baceloop,muduo::net::InetAddress(sip,sport),"MuduoClient"){}
             // 连接建立/断开时更新 _connection
             void onConnection(const muduo::net::TcpConnectionPtr& conn)
             {
               if(conn->connected())
               {
-                 DLOG("连接建立");
+                 LCZ_DEBUG("连接建立");
                  _connection = ConnectionFactory::create(conn, _protocol);
-                 _downlatch.countDown();
+                 _downlatch->countDown();
               }
               else{
-                DLOG("连接断开");_connection.reset();
+                LCZ_DEBUG("连接断开");_connection.reset();
               } 
            }
            // 从 Buffer 解析消息并调用 _cb_message 派发
@@ -341,29 +343,30 @@ namespace lcz_rpc
              {
                 if(_protocol->canProcessed(bace_buf)==false)
                 {
-                   DLOG("数据不完整，继续等待");
+                   LCZ_DEBUG("数据不完整，继续等待");
                    if(bace_buf->readableSize()>_maxdatalen)
                    {
-                      ELOG("数据长度超过最大值");
+                      LCZ_ERROR("数据长度超过最大值");
                       return;
                    }
                    break;
                 }           
                 BaseMessage::ptr msg;
                 bool ret=_protocol->onMessage(bace_buf,msg);
-                if(!ret){conn->shutdown();ELOG("处理消息失败");return;}
+                if(!ret){conn->shutdown();LCZ_ERROR("处理消息失败");return;}
                 if(_cb_message) _cb_message(_connection,msg);
              }
            }
-           // 连接服务器并阻塞等待连接建立
+           // 连接服务器并阻塞等待连接建立（支持断线重连）
            virtual void connect() override
            {
              _client.setConnectionCallback(std::bind(&MuduoClient::onConnection,this,std::placeholders::_1));
              _client.setMessageCallback(std::bind(&MuduoClient::onMessage,this,std::placeholders::_1,std::placeholders::_2,std::placeholders::_3));
-              //连接服务器
-             _client.connect();
-               _downlatch.wait();
-               DLOG("连接服务器成功！");
+              // 每次 connect 重建 latch，支持重复调用（断线重连等场景）
+              _downlatch.reset(new muduo::CountDownLatch(1));
+              _client.connect();
+               _downlatch->wait();
+               LCZ_DEBUG("连接服务器成功！");
             }
              // 断开与服务器的连接
              virtual void shutdown() override
@@ -373,8 +376,8 @@ namespace lcz_rpc
            // 通过已建立的连接发送消息，失败返回 false
            virtual bool send(const BaseMessage::ptr& msg) override
            {
-               if (!_connection) {ELOG("连接对象为空"); return false;}
-               if (!_connection->connected()) {ELOG("底层连接已断开");return false;}
+               if (!_connection) {LCZ_ERROR("连接对象为空"); return false;}
+               if (!_connection->connected()) {LCZ_ERROR("底层连接已断开");return false;}
                _connection->send(msg);
                return true;
            
@@ -382,7 +385,7 @@ namespace lcz_rpc
              // 获取封装后的连接对象
              virtual BaseConnection::ptr connection()  override
              {
-               if(_connection.get()==nullptr){ELOG("连接不存在");return nullptr;}
+               if(_connection.get()==nullptr){LCZ_ERROR("连接不存在");return nullptr;}
                return _connection;
              }
              // 检查是否已连接且连接有效
@@ -395,7 +398,7 @@ namespace lcz_rpc
            BaseProtocol::ptr _protocol;
            muduo::net::EventLoopThread _loopthread;
            muduo::net::EventLoop* _baceloop;
-           muduo::CountDownLatch _downlatch;
+           std::unique_ptr<muduo::CountDownLatch> _downlatch;
            muduo::net::TcpClient _client;
            BaseConnection::ptr _connection;
       };

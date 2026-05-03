@@ -10,6 +10,7 @@
 #include "net.hpp"
 #include "message.hpp"
 #include "publicconfig.hpp"
+#include "log_system/lcz_log.h"
 
 namespace lcz_rpc
 {
@@ -67,7 +68,7 @@ namespace lcz_rpc
         void onMessage(const BaseConnection::ptr& conn,BaseMessage::ptr& msg)
         {
              if (!msg) {
-                ELOG("收到空消息");
+                LCZ_ERROR("收到空消息");
                 return;
             }
             std::unique_lock<std::mutex> lock(_mutex);
@@ -77,7 +78,7 @@ namespace lcz_rpc
                 return it->second->onMessage(conn,msg);// 调用对应的处理器
             }
             //没有找到指定类型的处理回调
-            ELOG("收到未知消息类型 msgtype=%d (REQ_RPC=0..RSP_SERVICE=5, REQ_RPC_PROTO=6, RSP_RPC_PROTO=7, REQ_TOPIC_PROTO=8, RSP_TOPIC_PROTO=9, REQ_SERVICE_PROTO=10, RSP_SERVICE_PROTO=11)", 
+            LCZ_ERROR("收到未知消息类型 msgtype=%d (REQ_RPC=0..RSP_SERVICE=5, REQ_RPC_PROTO=6, RSP_RPC_PROTO=7, REQ_TOPIC_PROTO=8, RSP_TOPIC_PROTO=9, REQ_SERVICE_PROTO=10, RSP_SERVICE_PROTO=11)",
                  static_cast<int>(msg->msgType()));
             conn->shutdown();//关闭未知消息的连接
 

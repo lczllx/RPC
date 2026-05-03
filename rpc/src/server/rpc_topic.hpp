@@ -7,6 +7,7 @@
 #include <iostream>
 #include <algorithm>
 #include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
 namespace lcz_rpc
 {
     namespace server
@@ -299,7 +300,7 @@ namespace lcz_rpc
                 std::string topic_name = msg->topicKey();
                 if (_topics.count(topic_name)) //如果主题已存在，则直接返回
                 {
-                    ELOG("topic %s already exists", topic_name.c_str());
+                    LCZ_ERROR("topic %s already exists", topic_name.c_str());
                     return;
                 }
                 _topics.emplace(topic_name, std::make_shared<Topic>(topic_name));//如果主题不存在，则创建主题

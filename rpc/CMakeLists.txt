@@ -3,9 +3,9 @@ cmake_minimum_required(VERSION 3.16)
 project(lcz_rpc LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD_REQUIRED ON) #编译器必须支持 C++17
+set(CMAKE_CXX_EXTENSIONS OFF)  #不要 GNU 扩展
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON) #生成 compile_commands.json（给 IDE）
 
 option(LCZ_RPC_BUILD_EXAMPLES "构建 example 目录中的示例程序" ON)
 option(LCZ_RPC_BUILD_TESTS "构建单元测试（GoogleTest，需系统已安装，如 Ubuntu: libgtest-dev）" OFF)
@@ -49,17 +49,19 @@ endif()
 
 # Protobuf（路径二：纯 Proto RPC）
 find_package(Protobuf REQUIRED)
-set(LCZ_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/proto/rpc_envelope.proto")
+set(LCZ_PROTO_FILE "${CMAKE_CURRENT_SOURCE_DIR}/proto/rpc_envelope.proto")#protoc 编译 → .pb.cc + .pb.h
 set(LCZ_PROTOBUF_IMPORT_DIRS ${CMAKE_CURRENT_SOURCE_DIR})
 protobuf_generate_cpp(LCZ_PROTO_SRCS LCZ_PROTO_HDRS ${LCZ_PROTO_FILE})
-add_library(lcz_rpc_proto STATIC ${LCZ_PROTO_SRCS})
+add_library(lcz_rpc_proto STATIC ${LCZ_PROTO_SRCS}) #产物：liblcz_rpc_proto.a
 target_link_libraries(lcz_rpc_proto PUBLIC protobuf::libprotobuf)
 target_include_directories(lcz_rpc_proto PUBLIC
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Protobuf_INCLUDE_DIRS}
 )
 
-set(MUDUO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(MUDUO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)#关掉 muduo 自带的 example
+# 进入 muduo/CMakeLists.txt->创建 muduo_net (STATIC) 
+#→ libmuduo_net.a→ 创建 muduo_base (STATIC) → libmuduo_base.a→ 回到当前文件
 add_subdirectory(muduo)
 
 add_subdirectory(src)

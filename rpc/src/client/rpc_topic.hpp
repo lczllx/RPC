@@ -4,6 +4,7 @@
 #include "rpc_registry.hpp"
 #include "../server/rpc_topic.hpp"
 #include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
 
 namespace lcz_rpc
 {
@@ -44,7 +45,7 @@ namespace lcz_rpc
                 auto type=msg->optype();
                 if(type!=TopicOpType::PUBLISH)
                 {
-                    ELOG("接收到错误类型主题操作");
+                    LCZ_ERROR("接收到错误类型主题操作");
                     return;
                 }
                 std::string topic_name=msg->topicKey();
@@ -52,7 +53,7 @@ namespace lcz_rpc
                 auto pub_callback=getSubscribe(topic_name);
                 if(!pub_callback)
                 {
-                    ELOG("接收到主题 %s 消息，但是没有对应回调",topic_name.c_str());
+                    LCZ_ERROR("接收到主题 %s 消息，但是没有对应回调",topic_name.c_str());
                     return;
                 }
                 return pub_callback(topic_name,topic_msg);
@@ -112,18 +113,18 @@ namespace lcz_rpc
                 bool ret = _requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(req_msg), resp_msg);
                 if (!ret)
                 {
-                    ELOG("topic请求失败");
+                    LCZ_ERROR("topic请求失败");
                     return false;
                 }
                 TopicResponse::ptr topic_respmsg = std::dynamic_pointer_cast<TopicResponse>(resp_msg);
                 if (topic_respmsg.get() == nullptr)
                 {
-                    ELOG("topic类型向下转换失败失败");
+                    LCZ_ERROR("topic类型向下转换失败失败");
                     return false;
                 }
                 if (topic_respmsg->rcode() != RespCode::SUCCESS)
                 {
-                    ELOG("topic请求出错：%s", errReason(topic_respmsg->rcode()).c_str());
+                    LCZ_ERROR("topic请求出错：%s", errReason(topic_respmsg->rcode()).c_str());
                     return false;
                 }
                 return true;

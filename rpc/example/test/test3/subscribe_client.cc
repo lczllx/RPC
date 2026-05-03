@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
     auto topic_client = std::make_shared<lcz_rpc::client::TopicClient>("127.0.0.1", 7070);
     if (!topic_client->createTopic("order"))
     {
-        WLOG("topic order 已存在或创建失败，尝试直接订阅");
+        LCZ_WARN("topic order 已存在或创建失败，尝试直接订阅");
     }
     auto cb = [role](const std::string &topic, const std::string &msg) {
         std::cout << "[" << role << "] recv: " << msg << std::endl;

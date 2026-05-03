@@ -7,7 +7,7 @@ int main(int argc, char *argv[])
 
     auto topic_client = std::make_shared<lcz_rpc::client::TopicClient>("127.0.0.1", 7070);
     if (!topic_client->createTopic("order"))
-        WLOG("topic order 已存在或创建失败，继续发布");
+        LCZ_WARN("topic order 已存在或创建失败，继续发布");
 
     lcz_rpc::TopicForwardStrategy strategy = lcz_rpc::TopicForwardStrategy::BROADCAST;
     int fanout = 0;
@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
                                         tags,
                                         redundant))
         {
-            ELOG("第 %d 次发布失败", i);
+            LCZ_ERROR("第 %d 次发布失败", i);
         }
     }
 

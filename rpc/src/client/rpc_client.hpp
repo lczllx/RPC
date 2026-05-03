@@ -6,6 +6,7 @@
 #include "rpc_topic.hpp"
 #include <string>
 #include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
 
 namespace lcz_rpc
 {
@@ -30,7 +31,7 @@ namespace lcz_rpc
                 _dispacher->registerhandler<ServiceRequest>(lcz_rpc::MsgType::REQ_SERVICE,
                     [](const BaseConnection::ptr& conn, ServiceRequest::ptr& msg){
                         // 提供者不需要处理上线/下线通知，直接忽略
-                        DLOG("ClientRegistry收到REQ_SERVICE消息，忽略");
+                        LCZ_DEBUG("ClientRegistry收到REQ_SERVICE消息，忽略");
                     });
                 _client = lcz_rpc::ClientFactory::create(ip, port);
                 _client->setMessageCallback(msg_cb);
@@ -39,38 +40,38 @@ namespace lcz_rpc
             // 向注册中心注册服务方法
             bool methodRegistry(const std::string &method, const HostInfo &host,int load)
             {
-                auto conn = _client->connection();
-                if (conn.get() == nullptr || conn->connected() == false)
-                {
-                    ELOG("连接获取失败,无法注册服务:%s", method.c_str());
-                    return false;
-                }
-                return _provider->methodRegistry(conn, method, host, load);
+                if (!ensureConnected()) { LCZ_ERROR("连接获取失败,无法注册服务:%s", method.c_str()); return false; }
+                return _provider->methodRegistry(_client->connection(), method, host, load);
             }
             // 向注册中心上报负载
             bool reportLoad(const std::string &method, const HostInfo &host,int load)
             {
-                auto conn = _client->connection();
-                if(conn.get() == nullptr || conn->connected() == false)
-                {
-                    ELOG("连接获取失败,无法上报负载:%s", method.c_str());
-                    return false;
-                }
-                return _provider->reportLoad(conn, method, host, load);
+                if (!ensureConnected()) { LCZ_ERROR("连接获取失败,无法上报负载:%s", method.c_str()); return false; }
+                return _provider->reportLoad(_client->connection(), method, host, load);
             }
             // 向注册中心发送提供者心跳
             bool heartbeatProvider(const std::string &method, const HostInfo &host)
             {
-                auto conn = _client->connection();
-                if(conn.get() == nullptr || conn->connected() == false)
-                {
-                    ELOG("连接获取失败,无法发送心跳:%s", method.c_str());
-                    return false;
-                }
-                return _provider->heartbeatProvider(conn, method, host);
+                if (!ensureConnected()) { LCZ_ERROR("连接获取失败,无法发送心跳:%s", method.c_str()); return false; }
+                return _provider->heartbeatProvider(_client->connection(), method, host);
             }
 
         private:
+            // 确保连接有效，断开则重连
+            bool ensureConnected()
+            {
+                if (_client->connected()) return true;
+                LCZ_WARN("[ClientRegistry] 连接断开，尝试重连...");
+                _client->connect();
+                if (_client->connected())
+                {
+                    LCZ_INFO("[ClientRegistry] 重连成功");
+                    return true;
+                }
+                LCZ_ERROR("[ClientRegistry] 重连失败");
+                return false;
+            }
+
             BaseClient::ptr _client;
             Requestor::ptr _requestor;
             client::Provider::ptr _provider;
@@ -113,17 +114,17 @@ namespace lcz_rpc
 
                     auto conn = _client->connection();
                     if (!conn || !conn->connected()) {
-                        WLOG("[ClientDiscover-健康检查] 连接断开，暂不刷新");
+                        LCZ_WARN("[ClientDiscover-健康检查] 连接断开，暂不刷新");
                         return;
                     }
 
                     for (const auto& method : methods) {
                         HostDetail detail;
                         if (_discover->serviceDiscover(conn, method, detail, LoadBalanceStrategy::ROUND_ROBIN, true)) {
-                            DLOG("[ClientDiscover-健康检查] method=%s 刷新成功 host=%s:%d load=%d",
+                            LCZ_DEBUG("[ClientDiscover-健康检查] method=%s 刷新成功 host=%s:%d load=%d",
                                  method.c_str(), detail.host.first.c_str(), detail.host.second, detail.load);
                         } else {
-                            WLOG("[ClientDiscover-健康检查] method=%s 刷新失败，等待下次调用重新发现", method.c_str());
+                            LCZ_WARN("[ClientDiscover-健康检查] method=%s 刷新失败，等待下次调用重新发现", method.c_str());
                         }
                     }
                 });
@@ -135,7 +136,7 @@ namespace lcz_rpc
                 auto conn = _client->connection();
                 if(conn.get() == nullptr || conn->connected() == false)
                 {
-                    ELOG("连接获取失败,无法发现服务:%s", method.c_str());
+                    LCZ_ERROR("连接获取失败,无法发现服务:%s", method.c_str());
                     return false;
                 }
                 if (_discover->serviceDiscover(conn, method, detail,strategy)) {
@@ -155,7 +156,7 @@ namespace lcz_rpc
                 auto conn = _client->connection();
                 if(conn.get() == nullptr || conn->connected() == false)
                 {
-                    ELOG("连接获取失败,无法发现服务:%s", method.c_str());
+                    LCZ_ERROR("连接获取失败,无法发现服务:%s", method.c_str());
                     return false;
                 }
                 if (_discover->serviceDiscover(conn, method, detail,strategy)) {
@@ -223,7 +224,7 @@ namespace lcz_rpc
                 BaseClient::ptr client = getClient(method_name);
                 if (client.get() == nullptr)
                 {
-                    ELOG("服务获取失败：%s", method_name.c_str());
+                    LCZ_ERROR("服务获取失败：%s", method_name.c_str());
                     return false;
                 }
                 return _caller->call(client->connection(), method_name, params, result);
@@ -234,7 +235,7 @@ namespace lcz_rpc
                 BaseClient::ptr client = getClient(method_name);
                 if (client.get() == nullptr)
                 {
-                    ELOG("服务获取失败：%s", method_name.c_str());
+                    LCZ_ERROR("服务获取失败：%s", method_name.c_str());
                     return false;
                 }
                 return _caller->call(client->connection(), method_name, params, result);
@@ -245,7 +246,7 @@ namespace lcz_rpc
                 BaseClient::ptr client = getClient(method_name);
                 if (client.get() == nullptr)
                 {
-                    ELOG("服务获取失败：%s", method_name.c_str());
+                    LCZ_ERROR("服务获取失败：%s", method_name.c_str());
                     return false;
                 }
                 return _caller->call(client->connection(), method_name, params, cb);
@@ -258,7 +259,7 @@ namespace lcz_rpc
                 BaseClient::ptr client = getClient(method_name);
                 if (client.get() == nullptr)
                 {
-                    ELOG("服务获取失败：%s", method_name.c_str());
+                    LCZ_ERROR("服务获取失败：%s", method_name.c_str());
                     return false;
                 }
                 return _caller->call_proto(client->connection(), method_name, req, resp, timeout);
@@ -294,7 +295,7 @@ namespace lcz_rpc
                     bool ret = _discover_client->serviceDiscover(method, detail,_loadbalance_strategy);
                     if (!ret)
                     {
-                        ELOG("服务发现失败");
+                        LCZ_ERROR("服务发现失败");
                         return BaseClient::ptr();
                     }
                     HostInfo host = detail.host;

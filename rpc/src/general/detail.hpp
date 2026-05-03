@@ -12,26 +12,9 @@
 #include <atomic>
 #include <iomanip>
 #include "publicconfig.hpp"
+#include "log_system/lcz_log.h"
 
-#define LDBG 0
-#define LINF 1
-#define LWARN 2
-#define LERR 3
-
-#define LDEFAULT LINF          // 默认开启所有等级的日志
-#define LOG(level,format,...){\
-    if(level>=LINF)/*只打印错误日志*/{\
-        time_t t=time(NULL);\
-        struct tm *lt=localtime(&t);\
-        char time_tmp[32]={0};\
-        strftime(time_tmp,31,"%m-%d %T",lt);\
-        fprintf(stdout,"[%s][%s:%d] " format"\n",time_tmp,__FILE__,__LINE__,##__VA_ARGS__);\
-    }\
-}
-#define DLOG(format,...)LOG(LDBG,format,##__VA_ARGS__);
-#define ILOG(format,...)LOG(LINF,format,##__VA_ARGS__);
-#define WLOG(format,...)LOG(LWARN,format,##__VA_ARGS__);
-#define ELOG(format,...)LOG(LERR,format,##__VA_ARGS__);
+// 旧日志宏已移除，统一使用 log_system/lcz_log.h 中的 LCZ_DEBUG/LCZ_INFO/LCZ_WARN/LCZ_ERROR
 
 // JSON 工具类：Jsoncpp 的薄封装，用于 Json 与字符串的序列化/反序列化
 class JSON{
@@ -45,7 +28,7 @@ class JSON{
         int ret=sw->write(data,&ss);
         if (ret != 0) 
         {
-            ELOG("Serialize failed!");
+            LCZ_ERROR("Serialize failed!");
             return false;
         }
         output=ss.str();
@@ -61,7 +44,7 @@ class JSON{
         bool ret=cr->parse(input.c_str(),input.c_str()+input.size(),&data,&errs);
         if (!ret) 
         {
-            ELOG("DeSerialize failed!,%s",errs.c_str());
+            LCZ_ERROR("DeSerialize failed!,%s",errs.c_str());
             return false;
         }
         return true;

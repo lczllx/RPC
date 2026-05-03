@@ -2,9 +2,11 @@
 #include "../general/net.hpp"
 #include "../general/message.hpp"
 #include "../general/dispacher.hpp"
-#include <set>
 #include "../general/publicconfig.hpp"
+#include "../general/log_system/lcz_log.h"
+#include "registry_store.hpp"
 #include <iostream>
+#include <set>
 
 namespace lcz_rpc
 {
@@ -132,7 +134,7 @@ namespace lcz_rpc
                 for (auto &p : it->second) {
                     if (p->address == host) {
                         p->lastheartbeat = std::chrono::steady_clock::now();
-                        ILOG("%s:%d 心跳检测 更新最后心跳时间", p->address.first.c_str(),p->address.second);
+                        LCZ_INFO("%s:%d 心跳检测 更新最后心跳时间", p->address.first.c_str(),p->address.second);
                         return true; 
                     }
                 }
@@ -155,7 +157,7 @@ namespace lcz_rpc
                         auto idle_sec = std::chrono::duration_cast<std::chrono::seconds>(now - p->lastheartbeat).count();
                         if (now - p->lastheartbeat > idle_timeout)
                         {
-                            ILOG("[Provider扫描] 发现过期提供者 method=%s %s:%d 闲置时间=%ld秒", 
+                            LCZ_INFO("[Provider扫描] 发现过期提供者 method=%s %s:%d 闲置时间=%ld秒", 
                                  method.c_str(), p->address.first.c_str(), p->address.second, idle_sec);
                             expired.emplace_back(method, p->address);
                             to_remove_providers.push_back(p);
@@ -274,76 +276,63 @@ namespace lcz_rpc
         {
             public:
             using ptr=std::shared_ptr<PwithDManager>;
-            PwithDManager():_provider(std::make_shared<ProviderManager>()),_discoverer(std::make_shared<DiscoverManager>()){}
+            PwithDManager(std::shared_ptr<IRegistryStore> store):_rstore(std::move(store)),_discoverer(std::make_shared<DiscoverManager>()){}
             // 处理服务请求：注册/发现/负载上报/心跳
             void onserviceRequest(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg)
             {
                 ServiceOpType optype=msg->optype();
                 if(optype==ServiceOpType::REGISTER)
                 {//服务注册通知
-                    ILOG("%s:%d 注册服务 %s", msg->host().first.c_str(),msg->host().second, msg->method().c_str());
-                    // demo 友好输出：不依赖日志宏等级，便于面试演示
-                    std::cout << "[Registry] 收到注册 method=" << msg->method()
-                              << " host=" << msg->host().first << ":" << msg->host().second
-                              << " load=" << msg->load()
-                              << std::endl;
-                    _provider->addProvider(conn,msg->host(),msg->method(),msg->load());//注册服务
+                    LCZ_INFO("[Registry] 收到注册 method=%s host=%s:%d load=%d",
+                             msg->method().c_str(), msg->host().first.c_str(),
+                             msg->host().second, msg->load());
+                    _rstore->registerInstance(conn,msg->host(),msg->method(),msg->load());//注册服务
                     _discoverer->onlineNotify(msg->method(),msg->host());
                     //后续在这里处理负载均衡
                     return registryResponse(conn,msg);
                 }
                 else if(optype==ServiceOpType::DISCOVER)
                 {//服务发现通知
-                    ILOG("客⼾端要进⾏ %s 服务发现！", msg->method().c_str());
+                    LCZ_INFO("客⼾端要进⾏ %s 服务发现！", msg->method().c_str());
                     _discoverer->addDiscoverer(conn,msg->host(),msg->method());
                     return discoverResponse(conn,msg);
                 }
                 else if(optype==ServiceOpType::LOAD_REPORT)
                 {//服务负载上报
-                    ILOG("%s:%d 上报负载 %d", msg->host().first.c_str(),msg->host().second, msg->load());
+                    LCZ_INFO("%s:%d 上报负载 %d", msg->host().first.c_str(),msg->host().second, msg->load());
                     //更新负载
-                    bool update_success=_provider->updateProviderLoad(msg->method(),msg->host(),msg->load());
+                    bool update_success=_rstore->reportLoad(msg->method(),msg->host(),msg->load());
                    
                     return updateloadResponse(conn,msg,update_success);
                 }
                 else if(optype==ServiceOpType::HEARTBEAT_PROVIDER)//提供者向注册中心周期报活，服务端刷新 Provider.lasttime
                 {//心跳检测
-                    ILOG("[RegistryServer-Provider心跳接收] method=%s %s:%d", 
+                    LCZ_INFO("[RegistryServer-Provider心跳接收] method=%s %s:%d", 
                          msg->method().c_str(), msg->host().first.c_str(), msg->host().second);
-                    bool update_success=_provider->updateProviderLastHeartbeat(msg->method(),msg->host());
+                    bool update_success=_rstore->heartbeat(msg->method(),msg->host());
                     if (update_success) {
-                        ILOG("[RegistryServer-Provider心跳处理] method=%s %s:%d 更新成功", 
+                        LCZ_INFO("[RegistryServer-Provider心跳处理] method=%s %s:%d 更新成功", 
                              msg->method().c_str(), msg->host().first.c_str(), msg->host().second);
                     } else {
-                        WLOG("[RegistryServer-Provider心跳处理] method=%s %s:%d 更新失败，提供者不存在", 
+                        LCZ_WARN("[RegistryServer-Provider心跳处理] method=%s %s:%d 更新失败，提供者不存在", 
                              msg->method().c_str(), msg->host().first.c_str(), msg->host().second);
                     }
                     return heartbeatResponse(conn,msg,update_success,ServiceOpType::HEARTBEAT_PROVIDER);
                 }
                 else{
-                    ELOG("收到服务操作请求，但是操作类型错误");
+                    LCZ_ERROR("收到服务操作请求，但是操作类型错误");
                     return errResponse(conn,msg);
                 }
             }
-            // 连接关闭时移除 provider/discoverer 并广播下线
+            // 连接关闭：仅清理内存映射，不删持久化数据。给 provider 重连窗口，超时由 sweep 兜底
             void onconnShoutdown(const BaseConnection::ptr& conn)
             {
-                auto provider=_provider->getProvider(conn);
-                if(provider.get()!=nullptr)
-                {//是服务提供者下线
-                    ILOG("%s:%d 服务下线", provider->address.first.c_str(),provider->address.second);
-                    for(auto &method:provider->methods)
-                    {
-                        _discoverer->offlineNotify(method,provider->address);
-                    }
-                    _provider->delProvider(conn);
-
-                }
+                _rstore->cleanConnKeys(conn);
                 _discoverer->delProvider(conn);
             }
             // 扫描超时 provider、删除并通知发现者
             std::vector<std::pair<std::string, HostInfo>> sweepAndNotify(int idle_timeout_sec) {
-                auto expired = _provider->sweepExpired(std::chrono::seconds(idle_timeout_sec));
+                auto expired = _rstore->sweepExpired(std::chrono::seconds(idle_timeout_sec));
                 for (auto &pr : expired) {
                     _discoverer->offlineNotify(pr.first, pr.second);
                 }
@@ -365,6 +354,7 @@ namespace lcz_rpc
             void registryResponse(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg)
             {
                 auto msg_resp=MessageFactory::create<ServiceResponse>();
+                //组织响应信息
                 msg_resp->setId(msg->rid());
                 msg_resp->setRcode(RespCode::SUCCESS);
                 msg_resp->setMsgType(MsgType::RSP_SERVICE);
@@ -375,12 +365,13 @@ namespace lcz_rpc
             void discoverResponse(const BaseConnection::ptr& conn,const ServiceRequest::ptr& msg)
             {
                 auto msg_resp=MessageFactory::create<ServiceResponse>();
+                //组织响应信息
                 msg_resp->setId(msg->rid());
                 msg_resp->setRcode(RespCode::SUCCESS);
                 msg_resp->setMsgType(MsgType::RSP_SERVICE);
                 msg_resp->setOptype(ServiceOpType::DISCOVER);
-                msg_resp->setHost(_provider->methodHost(msg->method()));
-                auto hosts = _provider->methodHostDetails(msg->method());
+                msg_resp->setHost(_rstore->methodHost(msg->method()));
+                auto hosts = _rstore->methodHostDetails(msg->method());
                 msg_resp->setHostDetails(hosts);
                 conn->send(msg_resp);
             }
@@ -390,7 +381,7 @@ namespace lcz_rpc
                
                 auto msg_resp=MessageFactory::create<ServiceResponse>();
                 if(!update_success){
-                    ELOG("load report failed: %s %s:%d 未找到对应服务",
+                    LCZ_ERROR("load report failed: %s %s:%d 未找到对应服务",
                         msg->method().c_str(),
                         msg->host().first.c_str(),
                         msg->host().second);
@@ -409,7 +400,7 @@ namespace lcz_rpc
             {
                 auto msg_resp=MessageFactory::create<ServiceResponse>();
                 if(!update_success){
-                    ELOG("心跳检测失败: %s %s:%d 未找到对应服务提供者",
+                    LCZ_ERROR("心跳检测失败: %s %s:%d 未找到对应服务提供者",
                         msg->method().c_str(),
                         msg->host().first.c_str(),
                         msg->host().second);
@@ -424,7 +415,7 @@ namespace lcz_rpc
                 conn->send(msg_resp);
             }
             private:
-            ProviderManager::ptr _provider;
+            IRegistryStore::ptr _rstore;
             DiscoverManager::ptr _discoverer;
 
         };

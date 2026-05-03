@@ -1,0 +1,249 @@
+#!/bin/bash
+# RPC 功能演示脚本
+# 用法: ./demo.sh {etcd|offline|timeout|topic|all}
+
+set -e
+
+BIN_DIR="$(cd "$(dirname "$0")/rpc/build" && pwd)"
+BIN="$BIN_DIR/bin"          # test1 / test4
+BIN3="$BIN_DIR/example/test/test3"  # test3 has no RUNTIME_OUTPUT_DIRECTORY
+LOG_DIR="/tmp/rpc-demo-logs"
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
+step()  { echo -e "\n${BOLD}${CYAN}[$1/$TOTAL]${NC} ${BOLD}$2${NC}"; }
+info()  { echo -e "  ${GREEN}→${NC} $*"; }
+warn()  { echo -e "  ${RED}→${NC} $*"; }
+
+cleanup() {
+    killall test1_registry_server test1_rpc_server test1_rpc_client \
+            test4_registry_server test4_provider_server test4_consumer_client \
+            test3_topic_server test3_subscribe_client test3_publish_client 2>/dev/null || true
+}
+trap cleanup EXIT
+
+demo_etcd() {
+    TOTAL=6
+    echo -e "${BOLD}=== 演示: etcd 持久化 — registry 重启状态不丢 ===${NC}"
+    echo "场景: provider 注册到 registry → kill registry → 重启 registry → 注册信息仍在 etcd 中"
+    echo "意义: 面试官问'注册中心挂了怎么办'，你的答案'数据在 etcd，重启即恢复'"
+    echo ""
+
+    # 检查 etcd
+    if ! pgrep -x etcd >/dev/null; then
+        warn "请先启动 etcd: etcd --listen-client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379 &"
+        return 1
+    fi
+    info "etcd 已在运行"
+    export LCZ_ETCD=http://127.0.0.1:2379
+
+    # 起 registry（etcd 模式）
+    step 1 "启动 registry（etcd 后端）"
+    "$BIN/test1_registry_server" > "$LOG_DIR/etcd_reg.log" 2>&1 &
+    REG_PID=$!
+    sleep 2
+    info "registry 启动 (pid=$REG_PID, LCZ_ETCD=http://127.0.0.1:2379)"
+
+    # 起 provider，注册 add 服务
+    step 2 "启动 provider 并注册到 registry"
+    "$BIN/test1_rpc_server" > "$LOG_DIR/etcd_prov.log" 2>&1 &
+    PROV_PID=$!
+    sleep 3
+    info "provider 已注册 add 方法到 etcd"
+    info "etcd 中存储:"
+    etcdctl get --prefix /lcz-rpc/ 2>/dev/null | head -8 || true
+
+    # 杀 registry
+    step 3 "杀掉 registry 进程..."
+    kill $REG_PID 2>/dev/null || true
+    sleep 1
+    info "registry 已停止"
+
+    # 重启 registry
+    step 4 "重启 registry，从 etcd 恢复数据"
+    "$BIN/test1_registry_server" > "$LOG_DIR/etcd_reg2.log" 2>&1 &
+    REG_PID=$!
+    sleep 2
+    info "registry 重启完成 (pid=$REG_PID)"
+
+    # 验证 client 仍能发现服务
+    step 5 "client 发起调用，验证服务可发现"
+    timeout 10 "$BIN/test1_rpc_client" > "$LOG_DIR/etcd_client.log" 2>&1 || true
+    if grep -q "result:99" "$LOG_DIR/etcd_client.log"; then
+        info "调用成功: add(66,33) = 99 ✓"
+    else
+        warn "调用失败，查看 $LOG_DIR/etcd_client.log"
+    fi
+
+    # 验证 etcd 数据仍在
+    step 6 "验证 etcd 中注册信息完好"
+    info "etcd 数据:"
+    etcdctl get --prefix /lcz-rpc/ 2>/dev/null | head -8 || true
+
+    kill $REG_PID $PROV_PID 2>/dev/null || true
+    echo -e "\n${GREEN}etcd HA 演示完成${NC}"
+}
+
+demo_offline() {
+    TOTAL=5
+    echo -e "${BOLD}=== 演示: 死节点自动下线 ===${NC}"
+    echo "场景: provider 注册 → kill provider → registry 心跳超时自动剔除"
+    echo "意义: provider 挂了 client 不会被调到，无需人工介入"
+    echo ""
+
+    # 起 registry（memory 模式，心跳间隔 5s，超时 15s）
+    step 1 "启动 registry（心跳扫描间隔 5s，15s 无心跳即剔除）"
+    "$BIN/test4_registry_server" > "$LOG_DIR/off_reg.log" 2>&1 &
+    REG_PID=$!
+    sleep 1
+    info "registry 启动，监听 7070"
+
+    # 起 provider
+    step 2 "启动 provider 并注册"
+    "$BIN/test4_provider_server" > "$LOG_DIR/off_prov.log" 2>&1 &
+    PROV_PID=$!
+    sleep 2
+    info "provider 已注册 (心跳间隔 10s)"
+    grep "注册成功\|收到注册" "$LOG_DIR/off_reg.log" | tail -2
+
+    # 验证 client 能调通
+    step 3 "client 调用 add(10,20)，确认连通"
+    timeout 12 "$BIN/test4_consumer_client" > "$LOG_DIR/off_client.log" 2>&1 || true
+    if grep -q "结果: 30\|调用成功" "$LOG_DIR/off_client.log"; then
+        info "调用成功: add(10,20) = 30 ✓"
+    else
+        warn "调用失败，查看 $LOG_DIR/off_client.log"
+    fi
+
+    # 杀 provider
+    step 4 "杀掉 provider，等待 registry 心跳超时剔除"
+    kill $PROV_PID 2>/dev/null || true
+    info "provider 已杀掉 (pid=$PROV_PID)"
+    info "等待 20s（心跳 10s + 超时判定 15s）..."
+    sleep 20
+    grep -E "发现过|剔除|下线" "$LOG_DIR/off_reg.log" | tail -5
+
+    # 验证剔除
+    step 5 "验证 registry 已移除死掉的 provider"
+    grep -c "过期\|剔除\|下线" "$LOG_DIR/off_reg.log" >/dev/null 2>&1 \
+        && info "provider 已被标记为过期并剔除 ✓" \
+        || warn "未检测到剔除日志，检查 $LOG_DIR/off_reg.log"
+
+    kill $REG_PID 2>/dev/null || true
+    echo -e "\n${GREEN}死节点剔除演示完成${NC}"
+}
+
+demo_timeout() {
+    TOTAL=4
+    echo -e "${BOLD}=== 演示: 超时控制 ===${NC}"
+    echo "场景: slow provider 执行 3s，client 设置 1s 超时"
+    echo "意义: 防止慢请求拖死调用方，超时立即返回不阻塞"
+    echo ""
+
+    # 起 registry
+    step 1 "启动 registry"
+    "$BIN/test1_registry_server" > "$LOG_DIR/to_reg.log" 2>&1 &
+    REG_PID=$!
+    sleep 2
+
+    # 起慢 provider（sleep 3s 再返回）
+    step 2 "启动慢 provider（add 延时 3s）"
+    "$BIN/test1_slow_rpc_server" > "$LOG_DIR/to_slow.log" 2>&1 &
+    SLOW_PID=$!
+    sleep 2
+    info "慢 provider 已注册 (每次调用睡眠 3s)"
+
+    # 起 timeout client（1s 超时）
+    step 3 "client 设置 1s 超时，对比结果"
+    timeout 10 "$BIN/test1_timeout_test_client" > "$LOG_DIR/to_client.log" 2>&1 || true
+    sleep 2
+
+    # 展示结果
+    step 4 "结果"
+    echo -e "  ${CYAN}=== 超时 client 输出 ===${NC}"
+    grep -E "超时|成功|失败|耗时|timeout" "$LOG_DIR/to_client.log" || cat "$LOG_DIR/to_client.log"
+
+    kill $REG_PID $SLOW_PID 2>/dev/null || true
+    echo -e "\n${GREEN}超时控制演示完成${NC}"
+}
+
+demo_topic() {
+    TOTAL=4
+    echo -e "${BOLD}=== 演示: Topic 发布订阅 — 多策略分发 ===${NC}"
+    echo "场景: 2 个订阅者（vip/normal），发布者用不同策略发送 5 条消息"
+    echo ""
+
+    step 1 "启动 Topic 服务器"
+    "$BIN3/test3_topic_server" > "$LOG_DIR/top_srv.log" 2>&1 &
+    SRV_PID=$!
+    sleep 1
+    info "Topic 服务端启动 (port 7070)"
+
+    step 2 "启动订阅者: vip (priority=5) + normal (priority=1)"
+    "$BIN3/test3_subscribe_client" vip > "$LOG_DIR/top_vip.log" 2>&1 &
+    VIP_PID=$!
+    "$BIN3/test3_subscribe_client" normal > "$LOG_DIR/top_normal.log" 2>&1 &
+    NORMAL_PID=$!
+    sleep 1
+    info "vip 订阅者 (tags=[vip], priority=5)"
+    info "normal 订阅者 (tags=[normal], priority=1)"
+
+    step 3 "发布消息: 按不同策略分发"
+    echo ""
+    for mode in broadcast priority fanout hash redundant; do
+        info "策略: $mode"
+        "$BIN3/test3_publish_client" "$mode" > "$LOG_DIR/top_pub_${mode}.log" 2>&1
+        sleep 0.3
+    done
+
+    step 4 "订阅者收到的消息"
+    echo -e "  ${CYAN}=== vip 订阅者 ===${NC}"
+    grep "recv" "$LOG_DIR/top_vip.log" 2>/dev/null | head -20 || echo "  无输出"
+    echo -e "  ${CYAN}=== normal 订阅者 ===${NC}"
+    grep "recv" "$LOG_DIR/top_normal.log" 2>/dev/null | head -20 || echo "  无输出"
+    echo ""
+    info "broadcast: 所有订阅者都收到"
+    info "priority: 只有 vip 收到（priority=2 > normal 的 1）"
+    info "fanout: 每个订阅者收到 1 份（fanout=1）"
+    info "hash: 按 shard key 固定路由到同一订阅者"
+    info "redundant: 每个消息发 2 份"
+
+    kill $SRV_PID $VIP_PID $NORMAL_PID 2>/dev/null || true
+    echo -e "\n${GREEN}Topic 演示完成${NC}"
+}
+
+mkdir -p "$LOG_DIR"
+
+case "${1:-}" in
+    etcd)
+        demo_etcd
+        ;;
+    offline)
+        demo_offline
+        ;;
+    timeout)
+        demo_timeout
+        ;;
+    topic)
+        demo_topic
+        ;;
+    all)
+        demo_etcd
+        demo_offline
+        demo_timeout
+        demo_topic
+        echo -e "\n${BOLD}${GREEN}全部演示完成。日志: $LOG_DIR/${NC}"
+        ;;
+    *)
+        echo "用法: ./demo.sh {etcd|offline|timeout|topic|all}"
+        echo ""
+        echo "  etcd    — 演示 registry 重启后 etcd 数据不丢，服务可继续发现"
+        echo "  offline — 演示 provider 挂掉后 registry 自动检测并剔除"
+        echo "  timeout — 演示慢 provider 超时控制，client 1s 超时立即返回"
+        echo "  topic   — 演示发布订阅 5 种转发策略（broadcast/priority/fanout/hash/redundant）"
+        echo "  all     — 全部跑一遍"
+        echo ""
+        echo "  注意: etcd 演示需要先启动 etcd 服务 (etcd --listen-client-urls=http://127.0.0.1:2379 &)"
+        echo "  日志: $LOG_DIR/"
+        ;;
+esac
