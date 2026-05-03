@@ -9,10 +9,11 @@
 #include "../general/log_system/lcz_log.h"
 #include "memory_registry_store.hpp"
 #include "etcd_registry_store.hpp"
-#include <atomic>//原子操作
+#include <atomic>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
-#include <thread>//线程支持
+#include <thread>
 namespace lcz_rpc
 {
     namespace server
@@ -126,7 +127,7 @@ namespace lcz_rpc
             {
                 if (_enablediscover)  // 如果启用服务发现，向注册中心注册方法
                 {
-                    int currentLoad = 10; // 临时写死，后续再做动态更新
+                    int currentLoad = this->currentLoad();
                     bool ok = false;
                     // demo/工程稳定性：注册中心刚启动时可能有短暂不可用，这里做少量重试
                     for (int attempt = 1; attempt <= 3; ++attempt)
@@ -211,12 +212,17 @@ namespace lcz_rpc
                 }
             }
         private:
-            // 获取当前负载（占位实现，后续可动态更新）
-            int currentLoad()const
+            // 读取 /proc/loadavg 1 分钟负载，按 CPU 核数归一化到 [0, 100]
+            int currentLoad() const
             {
-                static int fake = 0;
-                return (fake += 5) % 100;
-                // 后续再做动态更新
+                std::ifstream ifs("/proc/loadavg");
+                if (!ifs) return 0;
+                float load1 = 0;
+                ifs >> load1;
+                int nproc = static_cast<int>(std::thread::hardware_concurrency());
+                if (nproc < 1) nproc = 1;
+                int load = static_cast<int>((load1 / nproc) * 100);
+                return load > 100 ? 100 : load;
             }
             // 定时器回调：向注册中心上报当前负载
             void reportLoadTick()
