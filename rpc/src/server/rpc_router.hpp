@@ -13,15 +13,15 @@
 */
 namespace lcz_rpc{
     namespace server{
+        // RPC 参数/返回值类型枚举，与 Json::Value 的类型检查方法一一对应
         enum class ValType {
-            BOOL = 0,       // 布尔值: true/false
-            INTEGRAL,       // 整型: int8, int16, int32, int64 等
-            NUMERIC,        // 数值型: float, double 等
-            STRING,         // 字符串: std::string
-            ARRAY,          // 数组: 同类型元素集合
-            OBJECT,         // 对象: 键值对集合
-            NULL_TYPE       // 6: 空值
-            
+            BOOL = 0,       // Json::isBool()
+            INTEGRAL,       // Json::isIntegral()
+            NUMERIC,        // Json::isNumeric()
+            STRING,         // Json::isString()
+            ARRAY,          // Json::isArray()
+            OBJECT,         // Json::isObject()
+            NULL_TYPE       // Json::isNull()
         };
         // 服务描述类：描述单个 RPC 方法，负责参数校验、执行回调、返回值校验
         class ServiceDescribe
@@ -223,11 +223,12 @@ namespace lcz_rpc{
                 it->second(conn, body, req_id);
             }
             // 注册纯 Proto 方法：handler(conn, const Req&, Resp*)，热路径零 JSON
+            // 将类型化 handler 包装为统一签名的 lambda：body 解包 → Req → handler → Resp → 序列化 → 发送
             template<typename Req, typename Resp>
             void registerProtoHandler(const std::string& method,
                 std::function<void(const BaseConnection::ptr&, const Req&, Resp*)> handler)
             {
-                std::string method_copy = method;
+                std::string method_copy = method;  // 按值捕获，避免 lambda 持有悬空引用
                 _handlers[method] = [handler, method_copy](const BaseConnection::ptr& conn,
                     const std::string& body, const std::string& req_id) {
                     Req req;

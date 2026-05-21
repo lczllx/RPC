@@ -40,8 +40,8 @@ namespace lcz_rpc
                 // 启动心跳扫描定时器
                 _hb_loop_ptr = _hb_loop.startLoop(); // 启动心跳扫描线程的事件循环
                 _leader_elector->start(_hb_loop_ptr);
-                // 多实例 HA：仅 leader 执行 sweep，follower 跳过
-                // follower 的 discoverer 依赖客户端 health check（每 10s）发现 offline provider
+                // 心跳扫描定时器回调：多实例 HA 下仅 leader 执行 sweep 剔除过期 provider
+                // follower 不执行 sweep，其 discoverer 依赖客户端 health check（每 10s）兜底发现 offline provider
                 _hb_loop_ptr->runEvery(_hb_config.check_interval_sec, [this]()
                                        {
                     if (!_leader_elector->isLeader()) return;
@@ -61,6 +61,13 @@ namespace lcz_rpc
             void start()
             {
                 _server->start();
+            }
+            // 优雅退出
+            void stop()
+            {
+                _hb_loop_ptr->quit();           // 停止心跳扫描事件循环
+                _leader_elector->stop();        // 释放选举租约
+                _server->stop();                // 停止监听
             }
 
         private:
@@ -147,7 +154,7 @@ namespace lcz_rpc
                 {
                     int currentLoad = this->currentLoad();
                     bool ok = false;
-                    // demo/工程稳定性：注册中心刚启动时可能有短暂不可用，这里做少量重试
+                    // 注册中心启动窗口期内可能暂不可用，最多重试 3 次（每次间隔 1s）
                     for (int attempt = 1; attempt <= 3; ++attempt)
                     {
                         ok = _client_registry->methodRegistry(service->getMethodname(), _access_addr, currentLoad);
@@ -199,7 +206,17 @@ namespace lcz_rpc
             // 启动服务器（阻塞）
             void start() { _server->start(); }
 
-            // 在后台线程启动服务器，主线程可继续调用 registerMethod
+            // 优雅退出：停止上报定时器 → 停止服务器 → 等待后台线程
+            void stop()
+            {
+                if (_enablediscover && _report_loop_ptr)
+                    _report_loop_ptr->quit();   // 停止心跳+负载上报的事件循环
+                _server->stop();                // 唤醒 muduo 事件循环使其从 start() 返回
+                if (_server_thread.joinable())
+                    _server_thread.join();      // 等待后台线程退出
+            }
+
+            // 非阻塞启动：在后台线程运行 muduo 事件循环，主线程可继续调用 registerMethod/registerProtoHandler
             void startInThread()
             {
                 if (_server_thread.joinable())
@@ -223,19 +240,13 @@ namespace lcz_rpc
                 }
             }
 
-            // 析构函数：确保线程正确退出
             ~RpcServer()
             {
-                if (_server_thread.joinable())
-                {
-                    // 注意：这里无法直接停止 muduo 的事件循环
-                    // 实际应用中可能需要添加 stop() 方法来优雅关闭
-                    _server_thread.join();
-                }
+                stop();
             }
 
         private:
-            // 读取 /proc/loadavg 1 分钟负载，按 CPU 核数归一化到 [0, 100]
+            // 读取 /proc/loadavg 1 分钟负载均值，除以 CPU 核数后 ×100 归一化到 [0, 100]
             int currentLoad() const
             {
                 std::ifstream ifs("/proc/loadavg");
@@ -308,7 +319,7 @@ namespace lcz_rpc
             muduo::net::TimerId _report_timer;                 // 上报负载的定时器
             std::mutex _methods_mutex;                         // 方法互斥锁
             std::vector<std::string> _registered_methods;      // 已注册的方法
-            std::atomic<bool> _report_started{false};          // 上报负载的线程是否启动
+            std::atomic<bool> _report_started{false};          // CAS 保证多个 registerMethod 调用只启动一次心跳+负载上报定时器
             std::thread _server_thread;                        // 服务器运行线程（用于非阻塞启动）
         };
         // 主题服务端类：提供主题的创建/删除/订阅/发布
@@ -331,6 +342,11 @@ namespace lcz_rpc
             void start()
             {
                 _server->start();
+            }
+            // 优雅退出
+            void stop()
+            {
+                _server->stop();
             }
 
         private:

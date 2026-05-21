@@ -104,7 +104,7 @@ namespace lcz_rpc
                 
                 LCZ_ERROR("请求超时: id=%s", req_id.c_str());
                 
-                // 根据请求类型处理超时
+                // 根据请求是 JSON 还是 Proto 构造对应的超时响应
                 if(req_desc->reqtype == ReqType::ASYNC)
                 {
                     // 创建超时响应：若请求为 Proto RPC 则返回 ProtoRpcResponse，否则 RpcResponse
@@ -149,8 +149,8 @@ namespace lcz_rpc
                     LCZ_ERROR("构造请求描述对象失败！");
                     return false;
                 }
-                
-                // 设置超时定时器（使用 muduo 定时器）
+
+                // 设置超时定时器：muduo runAfter 到期后跨线程回调 onTimeout
                 auto* muduo_conn = dynamic_cast<MuduoConnection*>(conn.get());
                 if(muduo_conn && muduo_conn->getLoop())
                 {

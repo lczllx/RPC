@@ -9,6 +9,9 @@ namespace lcz_rpc
 {
     namespace client
     {
+        // 熔断器状态机（单节点粒度，method×host）：
+        // CLOSED → (连续失败>=threshold) → OPEN → (等待open_duration_sec) → HALF_OPEN
+        // HALF_OPEN → (探测成功) → CLOSED  |  HALF_OPEN → (探测失败) → OPEN
         // 一个 NodeBreaker 管一个远端的熔断状态
         // 管理一个 provider 的一个方法
         class NodeBreaker

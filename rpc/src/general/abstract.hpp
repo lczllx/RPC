@@ -94,6 +94,8 @@ namespace lcz_rpc {
         }
         // 启动服务器
         virtual void start() = 0;
+        // 优雅退出：唤醒事件循环使其从 start() 返回
+        virtual void stop() {}
     protected:
         ConnectionCallback _cb_connection;  // 连接建立回调
         CloseCallback _cb_close;            // 连接关闭回调

@@ -106,7 +106,7 @@ namespace lcz_rpc
                 _client = lcz_rpc::ClientFactory::create(ip, port);
                 _client->setMessageCallback(msg_cb);
                 _client->connect();
-                // 启动健康检查线程，定期刷新已发现服务
+                // 启动健康检查线程：定期 force_remote=true 拉取最新主机列表，兜底缓存失效
                 _health_loop_ptr = _health_loop.startLoop();
                 _health_loop_ptr->runEvery(_hb_config.heartbeat_interval_sec, [this]{
                     std::vector<std::string> methods;
@@ -294,7 +294,7 @@ namespace lcz_rpc
                     std::make_shared<lcz_rpc::server::MemoryCircuitStore>());
             }
 
-            // 收到下线通知时从连接池移除该 host 并清理对应熔断器
+            // 收到 OFFLINE 通知时：连接池移除 → 熔断器清理
             void delClient(const HostInfo &host)
             {
                 std::unique_lock<std::mutex> lock(_mutex);
@@ -362,7 +362,7 @@ namespace lcz_rpc
             }
 
         private:
-            // HostInfo 的哈希仿函数，用于 unordered_map
+            // HostInfo 的哈希仿函数：std::pair 没有 std::hash 特化，需要自定义
             struct HostHash
             {
                 size_t operator()(const HostInfo &host)const
@@ -374,7 +374,7 @@ namespace lcz_rpc
             std::mutex _mutex;
             bool _enablediscover;
             BaseClient::ptr _rpc_client;
-            std::unordered_map<HostInfo, BaseClient::ptr, HostHash> _rpc_clients; // 连接池 -长连接,收到服务下线通知后通过回调删除
+            std::unordered_map<HostInfo, BaseClient::ptr, HostHash> _rpc_clients; // 连接池（长连接），收到 OFFLINE 通知后通过 delClient 回调删除
             Requestor::ptr _requestor;
             ClientDiscover::ptr _discover_client; // 服务发现客户端
             CircuitBreaker::ptr _breaker;         // 熔断器（必须在 _caller 之前声明）

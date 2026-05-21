@@ -6,7 +6,7 @@
 #include "../general/publicconfig.hpp"
 #include "../general/log_system/lcz_log.h"
 
-static constexpr int MAX_IDX = 1000000000; //最大索引
+static constexpr int MAX_IDX = 1000000000; // 轮询索引上限（10亿），防止无界增长溢出
 
 namespace lcz_rpc
 {
@@ -74,7 +74,7 @@ namespace lcz_rpc
                 size_t pos=hash_val%_host.size();
                 return _host[pos];
             }
-            // 选负载最低的主机（同负载则轮询）
+            // 选负载最低的主机（同负载则轮询打散，避免所有请求砸向同一台）
             HostDetail pickLowestLoad() {
                 if(_host.empty())return HostDetail();
                 //负载最优+轮询分配

@@ -82,7 +82,8 @@ namespace lcz_rpc
             CURL *_curl;                           // libcurl句柄，构造时 init，析构时 cleanup，全程复用
             struct curl_slist *_headers = nullptr; // HTTP 请求头
             std::string _etcd_pos;                 // etcd地址，"http://127.0.0.1:2379"
-            int64_t _start_time;                   // 构造时刻（毫秒时间戳），sweepExpired 启动后宽限期内不剔除
+            int64_t _start_time;                   // 构造时刻（毫秒时间戳），sweepExpired 在启动后宽限期（默认30s）内不剔除
+            // 目的：给刚恢复的 etcd 数据一个"回魂窗口"，避免存量 provider 因心跳未及时上报被误剔
             // 记录每个连接写入过哪些 etcd key，断连时批量删除
             // 不需要随时通过连接查找provider，使用uintptr_t-不延长连接对象的生命周期
             std::unordered_map<uintptr_t, std::vector<std::string>> _keys_by_conn;

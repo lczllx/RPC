@@ -190,7 +190,9 @@ namespace lcz_rpc
                         return; 
                     }
                 
-                    static size_t pri_cursor = 0;// 静态变量，跨调用保持状态 
+                    // 静态变量，跨所有 Topic 实例共享，跨调用保持状态
+                    // 注意：这意味着多个不同 Topic 的 PRIORITY 策略共用同一个轮询游标
+                    static size_t pri_cursor = 0;
                     auto cur_sub = candidates[pri_cursor % candidates.size()];//获取当前优先级的订阅者
                     pri_cursor = (pri_cursor + 1) % candidates.size();//更新优先级cursor
                     cur_sub->conn->send(msg);//发送消息

@@ -9,7 +9,8 @@ namespace lcz_rpc
     namespace client
     {
         // 查找或创建 method×host 对应的 NodeBreaker
-        // 首次创建时从 store 恢复已持久化状态
+        // 并发安全：锁外创建 + 二次检查（double-check），避免持锁期间做 I/O
+        // 首次创建时从 store 恢复已持久化状态，OPEN 过期则转为 HALF_OPEN 允许探测
         NodeBreaker::ptr CircuitBreaker::getOrCreate(const std::string &method, const std::string &host)
         {
             {

@@ -352,7 +352,8 @@ namespace lcz_rpc
             int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::system_clock::now().time_since_epoch())
                               .count();
-            // 启动宽限期：idle 秒内不剔除，给提供者时间重连并刷新时间戳
+            // 启动宽限期：idle 秒内不剔除，给刚恢复的 etcd 数据一个"回魂窗口"
+            // 避免 server 重启后 etcd 中存量 provider 因心跳未及时上报被误剔
             if (now - _start_time < static_cast<int64_t>(idle.count()) * 1000)
                 return expired;
             auto kvs = http_get_prefix("/lcz-rpc/v1/providers/");
@@ -380,7 +381,7 @@ namespace lcz_rpc
 
             for (const auto &key : expired_keys)
             {
-                // 二次校验：防止 get→delete 之间 provider 心跳刷新了时间戳
+                // 二次校验：get → delete 之间 provider 可能心跳刷新了时间戳，再读一次确认仍过期才删
                 auto latest = http_get_prefix(key);
                 bool still_expired = true;
                 for (const auto &kv : latest)

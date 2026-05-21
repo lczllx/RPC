@@ -191,7 +191,7 @@ namespace lcz_rpc
             template <typename Req, typename Resp>
             bool call_proto(const BaseConnection::ptr &conn, const std::string &method_name,
                             const Req &req, Resp *resp,
-                            std::chrono::milliseconds timeout = std::chrono::seconds(5))
+                            std::chrono::milliseconds timeout = std::chrono::seconds(5)) // 默认5s超时，平衡慢请求与快速失败
             {
                 LCZ_DEBUG("RpcCaller call_proto sync method=%s", method_name.c_str());
                 std::string host = conn->peerAddress();
@@ -248,7 +248,7 @@ namespace lcz_rpc
             template <typename Req, typename Resp>
             bool call_proto(const BaseConnection::ptr &conn, const std::string &method_name,
                             const Req &req, std::future<Resp> *out_future,
-                            std::chrono::milliseconds timeout = std::chrono::seconds(5))
+                            std::chrono::milliseconds timeout = std::chrono::seconds(5)) // 默认5s超时，平衡慢请求与快速失败
             {
                 LCZ_DEBUG("RpcCaller call_proto async method=%s", method_name.c_str());
                 std::string host = conn->peerAddress();

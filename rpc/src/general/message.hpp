@@ -162,7 +162,9 @@ namespace lcz_rpc
     class TopicRequest:public JsonRequest
     {
         public:
-        using ptr = std::shared_ptr<TopicRequest>; 
+        using ptr = std::shared_ptr<TopicRequest>;
+        // 按转发策略校验对应字段：
+        // FANOUT→fanoutLimit>0, SOURCE_HASH→shardKey非空, PRIORITY→priority>0||tags非空, REDUNDANT→redundantCount>1
         virtual bool check()override
         {           
             if(_data[KEY_TOPIC_KEY].isString()==false||

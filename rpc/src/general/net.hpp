@@ -74,6 +74,11 @@ namespace lcz_rpc
       }
     };
     // LV 协议类：基于「长度+类型+id+body」的简单网络协议
+    // 线缆格式（大端网络字节序）：
+    // ┌────────────┬──────────────┬────────────┬──────────┬──────────┐
+    // │ total_len  │   msgtype    │  id_len    │    id    │   data   │
+    // │  (4B)      │   (4B)       │  (4B)      │ (变长)    │ (变长)    │
+    // └────────────┴──────────────┴────────────┴──────────┴──────────┘
     class LVProtocol :public BaseProtocol
     {
       public:
@@ -227,6 +232,11 @@ namespace lcz_rpc
                _server.start();//开始监听
                _baseloop.loop();//启动事件循环
             }
+            // 优雅退出：quit() 唤醒 loop() 使其返回，线程安全
+            virtual void stop() override
+            {
+                _baseloop.quit();
+            }
             private:
             // 连接建立/断开时维护 _connections 映射并触发回调
             void onConnection(const muduo::net::TcpConnectionPtr& conn)
@@ -299,7 +309,7 @@ namespace lcz_rpc
               }
            }
          private:
-            const size_t _maxdatalen=1024*1024*10;   //10M   
+            const size_t _maxdatalen=1024*1024*10;   // 10MB，单消息最大长度，防止恶意或异常大包撑爆内存
             muduo::net::EventLoop _baseloop;
             muduo::net::TcpServer _server;
             BaseProtocol::ptr _protocol;
@@ -400,7 +410,7 @@ namespace lcz_rpc
                return _connection && _connection->connected();
              }
         private:
-           const size_t _maxdatalen=1024*1024*10;   //10M 
+           const size_t _maxdatalen=1024*1024*10;   // 10MB，单消息最大长度，防止恶意或异常大包撑爆内存
            BaseProtocol::ptr _protocol;
            muduo::net::EventLoopThread _loopthread;
            muduo::net::EventLoop* _baceloop;
