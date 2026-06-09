@@ -1,30 +1,85 @@
-# 文档目录（不提交）
-rpc/docs/
-gdb_debug/
-docs/
-
-# 构建目录
+# ====== 构建产物 ======
 build/
 rpc/build/
 rpc/build-ci/
-CLAUDE.md
+bin/
+lib/
+*.o
+*.obj
+*.a
+*.la
+*.so
+*.so.*
+*.dylib
+*.dll
 
-# IDE 配置
+# ====== CMake 生成文件 ======
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+!**/CMakeLists.txt
+
+# compile_commands.json 由 CMake 生成，通常保留给 IDE 用，但可以忽略
+# 取消下面注释来忽略：
+# compile_commands.json
+
+# ====== IDE / 编辑器 ======
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.*.swp
+.*.swo
 
-# 系统文件
+# ====== 系统文件 ======
 .DS_Store
 Thumbs.db
 
-# etcd 本地数据（运行产生，不提交）
+# ====== etcd 运行时数据 ======
 default.etcd/
+*.etcd/
 
-# 临时文件
-*.tmp
+# ====== 日志和临时文件 ======
 *.log
+*.tmp
 *.cache
+*.out
 
+# ====== Core dump ======
+core
+core.*
+vgcore.*
+
+# ====== perf / 火焰图 ======
+perf.data
+perf.data.*
+*.perf
+*.svg
+!docs/*.svg
+
+# ====== 包管理 ======
+conanbuildinfo.*
+conaninfo.txt
+graph_info.json
+vcpkg/
+vcpkg_installed/
+_cmake_build/
+
+# ====== 文档（内部草稿不提交） ======
+docs/
+rpc/docs/
+
+# ====== 项目元信息 ======
+CLAUDE.md
+
+# ====== 调试 ======
+gdb_debug/
+
+# ====== 压缩包 ======
+*.tar.gz
+*.tar.xz
+*.zip
+*.7z
