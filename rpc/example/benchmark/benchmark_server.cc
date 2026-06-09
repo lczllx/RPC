@@ -26,6 +26,8 @@ static void heavy_compute_proto(const lcz_rpc::BaseConnection::ptr&, const Heavy
 
 int main(int argc, char* argv[])
 {
+    lcz::LoggerManager::getInstance().rootLogger()->setLevel(lcz::LogLevel::value::FATAL);
+
     int port = 8889;
     bool enable_discover = false;
     int registry_port = 8080;

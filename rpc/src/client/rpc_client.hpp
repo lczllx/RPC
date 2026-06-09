@@ -92,6 +92,9 @@ namespace lcz_rpc
                 if (_health_loop_ptr) {
                     _health_loop_ptr->quit();
                 }
+                if (_client) {
+                    _client->shutdown();
+                }
             }
             ClientDiscover(const std::string &ip, int port,const Discover::OfflineCallback &cb)
                 : _requestor(std::make_shared<Requestor>()), _discover(std::make_shared<Discover>(_requestor, cb)), _dispacher(std::make_shared<Dispacher>())
@@ -191,7 +194,12 @@ namespace lcz_rpc
         {
         public:
             using ptr = std::shared_ptr<RpcClient>;
-            ~RpcClient() = default;
+            ~RpcClient()
+            {
+                if (_rpc_client) {
+                    _rpc_client->shutdown();
+                }
+            }
             // enablediscover 是否开启服务发现
             RpcClient(bool enablediscover, const std::string &ip, int port)
                 : _enablediscover(enablediscover),

@@ -1,0 +1,191 @@
+cz@iv-yef3xahqtc5i3z5jzmr5:~/dev_version/rpc/RPC/rpc/build$ ./bin/benchmark_client single add 10000
+========== RPC 性能测试（默认 Protobuf）==========
+测试类型: single
+方法名: add
+服务器: 127.0.0.1:8889
+使用服务发现: 否
+[21:03:29][140271691213888][root_logger][/home/lcz/dev_version/rpc/RPC/rpc/example/benchmark/../../src/client/rpc_client.hpp:291][INFO]   [RpcClient] 使用内存存储断路器状态
+20260609 13:03:29.932300Z  5619 INFO  TcpClient::TcpClient[MuduoClient] - connector 0x563527615E50 - TcpClient.cc:69
+20260609 13:03:29.932325Z  5619 INFO  TcpClient::connect[MuduoClient] - connecting to 127.0.0.1:8889 - TcpClient.cc:107
+连接成功，开始性能测试...
+单线程测试，请求数: 10000
+
+========== 性能测试结果（Protobuf 序列化）==========
+总请求数: 10000
+成功请求: 10000
+失败请求: 0
+成功率: 100.00%
+测试时长: 1168 ms
+QPS: 8561.64
+
+延迟统计 (微秒):
+  最小值: 85.00 us
+  平均值: 116.00 us
+  P50:    114.00 us
+  P90:    135.00 us
+  P95:    143.00 us
+  P99:    164.00 us
+  最大值: 621.00 us
+==================================
+
+20260609 13:03:31.204754Z  5619 INFO  TcpClient::~TcpClient[MuduoClient] - connector 0x563527615E50 - TcpClient.cc:75
+lcz@iv-yef3xahqtc5i3z5jzmr5:~/dev_version/rpc/RPC/rpc/build$ ./bin/benchmark_client multi add 50000 8
+========== RPC 性能测试（默认 Protobuf）==========
+测试类型: multi
+方法名: add
+服务器: 127.0.0.1:8889
+使用服务发现: 否
+[21:03:43][140198760266816][root_logger][/home/lcz/dev_version/rpc/RPC/rpc/example/benchmark/../../src/client/rpc_client.hpp:291][INFO]   [RpcClient] 使用内存存储断路器状态
+20260609 13:03:43.925879Z  5681 INFO  TcpClient::TcpClient[MuduoClient] - connector 0x55DF4A6FFE50 - TcpClient.cc:69
+20260609 13:03:43.925901Z  5681 INFO  TcpClient::connect[MuduoClient] - connecting to 127.0.0.1:8889 - TcpClient.cc:107
+连接成功，开始性能测试...
+多线程测试，线程数: 8, 总请求数: 50000
+
+========== 性能测试结果（Protobuf 序列化）==========
+总请求数: 50000
+成功请求: 50000
+失败请求: 0
+成功率: 100.00%
+测试时长: 1714 ms
+QPS: 29171.53
+
+延迟统计 (微秒):
+  最小值: 90.00 us
+  平均值: 256.82 us
+  P50:    232.00 us
+  P90:    350.00 us
+  P95:    402.00 us
+  P99:    602.00 us
+  最大值: 42162.00 us
+==================================
+
+20260609 13:03:45.756535Z  5681 INFO  TcpClient::~TcpClient[MuduoClient] - connector 0x55DF4A6FFE50 - TcpClient.cc:75
+lcz@iv-yef3xahqtc5i3z5jzmr5:~/dev_version/rpc/RPC/rpc/build$ ./bin/benchmark_client throughput add 0 0 30
+========== RPC 性能测试（默认 Protobuf）==========
+测试类型: throughput
+方法名: add
+服务器: 127.0.0.1:8889
+使用服务发现: 否
+[21:03:53][139666890366016][root_logger][/home/lcz/dev_version/rpc/RPC/rpc/example/benchmark/../../src/client/rpc_client.hpp:291][INFO]   [RpcClient] 使用内存存储断路器状态
+20260609 13:03:53.063171Z  5755 INFO  TcpClient::TcpClient[MuduoClient] - connector 0x55BB294A2E50 - TcpClient.cc:69
+20260609 13:03:53.063221Z  5755 INFO  TcpClient::connect[MuduoClient] - connecting to 127.0.0.1:8889 - TcpClient.cc:107
+连接成功，开始性能测试...
+吞吐量测试，持续时间: 30 秒
+
+========== 性能测试结果（Protobuf 序列化）==========
+总请求数: 265925
+成功请求: 265925
+失败请求: 0
+成功率: 100.00%
+测试时长: 30000 ms
+QPS: 8864.17
+
+延迟统计 (微秒):
+  最小值: 82.00 us
+  平均值: 112.00 us
+  P50:    109.00 us
+  P90:    130.00 us
+  P95:    139.00 us
+  P99:    177.00 us
+  最大值: 3666.00 us
+==================================
+
+20260609 13:04:23.272562Z  5755 INFO  TcpClient::~TcpClient[MuduoClient] - connector 0x55BB294A2E50 - TcpClient.cc:75
+
+lcz@iv-yef3xahqtc5i3z5jzmr5:~/dev_version/rpc/RPC/build$ ./bin/benchmark_client multi add 50000 8
+========== RPC 性能测试（默认 Protobuf）==========
+测试类型: multi
+方法名: add
+服务器: 127.0.0.1:8889
+使用服务发现: 否
+20260609 13:04:35.475902Z  5917 INFO  TcpClient::TcpClient[MuduoClient] - connector 0x55AE6CA6AAB0 - TcpClient.cc:69
+20260609 13:04:35.475923Z  5917 INFO  TcpClient::connect[MuduoClient] - connecting to 127.0.0.1:8889 - TcpClient.cc:107
+连接成功，开始性能测试...
+多线程测试，线程数: 8, 总请求数: 50000
+
+========== 性能测试结果（Protobuf 序列化）==========
+总请求数: 50000
+成功请求: 50000
+失败请求: 0
+成功率: 100.00%
+测试时长: 1707 ms
+QPS: 29291.15
+
+延迟统计 (微秒):
+  最小值: 91.00 us
+  平均值: 260.15 us
+  P50:    243.00 us
+  P90:    341.00 us
+  P95:    391.00 us
+  P99:    521.00 us
+  最大值: 44905.00 us
+==================================
+
+20260609 13:04:37.300622Z  5917 INFO  TcpClient::~TcpClient[MuduoClient] - connector 0x55AE6CA6AAB0 - TcpClient.cc:75
+
+lcz@iv-yef3xahqtc5i3z5jzmr5:~/dev_version/rpc/RPC/rpc/build$ ./bin/benchmark_client multi add 50000 8
+========== RPC 性能测试（默认 Protobuf）==========
+测试类型: multi
+方法名: add
+服务器: 127.0.0.1:8889
+使用服务发现: 否
+[21:06:23][140489030220864][root_logger][/home/lcz/dev_version/rpc/RPC/rpc/example/benchmark/../../src/client/rpc_client.hpp:291][INFO] [RpcClient] 使用内存存储断路器状态
+20260609 13:06:23.401598Z  6185 INFO  TcpClient::TcpClient[MuduoClient] - connector 0x5605085FAE50 - TcpClient.cc:69
+20260609 13:06:23.401646Z  6185 INFO  TcpClient::connect[MuduoClient] - connecting to 127.0.0.1:8889 - TcpClient.cc:107
+连接成功，开始性能测试...
+多线程测试，线程数: 8, 总请求数: 50000
+
+========== 性能测试结果（Protobuf 序列化）==========
+总请求数: 50000
+成功请求: 50000
+失败请求: 0
+成功率: 100.00%
+测试时长: 1577 ms
+QPS: 31705.77
+
+延迟统计 (微秒):
+  最小值: 86.00 us
+  平均值: 241.01 us
+  P50:    222.00 us
+  P90:    320.00 us
+  P95:    368.00 us
+  P99:    532.00 us
+  最大值: 43991.00 us
+==================================
+
+20260609 13:06:25.096366Z  6185 INFO  TcpClient::~TcpClient[MuduoClient] - connector 0x5605085FAE50 - TcpClient.cc:75
+
+lcz@iv-yef3xahqtc5i3z5jzmr5:~/dev_version/rpc/RPC/build$ ./bin/benchmark_client multi add 50000 8 0 1 127.0.0.1 0 8080
+========== RPC 性能测试（默认 Protobuf）==========
+测试类型: multi
+方法名: add
+服务器: 127.0.0.1:0
+使用服务发现: 是
+20260609 13:10:15.772900Z  6851 INFO  TcpClient::TcpClient[MuduoClient] - connector 0x563211BBC470 - TcpClient.cc:69
+20260609 13:10:15.772922Z  6851 INFO  TcpClient::connect[MuduoClient] - connecting to 127.0.0.1:8080 - TcpClient.cc:107
+20260609 13:10:15.876858Z  6851 INFO  TcpClient::TcpClient[MuduoClient] - connector 0x563211BBD6F0 - TcpClient.cc:69
+20260609 13:10:15.876891Z  6851 INFO  TcpClient::connect[MuduoClient] - connecting to 127.0.0.1:8889 - TcpClient.cc:107
+连接成功，开始性能测试...
+多线程测试，线程数: 8, 总请求数: 50000
+
+========== 性能测试结果（Protobuf 序列化）==========
+总请求数: 50000
+成功请求: 50000
+失败请求: 0
+成功率: 100.00%
+测试时长: 1743 ms
+QPS: 28686.17
+
+延迟统计 (微秒):
+  最小值: 110.00 us
+  平均值: 268.30 us
+  P50:    241.00 us
+  P90:    374.00 us
+  P95:    433.00 us
+  P99:    610.00 us
+  最大值: 40606.00 us
+==================================
+
+20260609 13:10:17.637038Z  6851 INFO  TcpClient::~TcpClient[MuduoClient] - connector 0x563211BBC470 - TcpClient.cc:75
+benchmark_client: /home/lcz/dev_version/rpc/RPC/rpc/muduo/muduo/net/Channel.cc:40: muduo::net::Channel::~Channel(): Assertion `!addedToLoop_' failed.
+Aborted (core dumped)
