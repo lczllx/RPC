@@ -283,9 +283,9 @@ namespace lcz_rpc
                 ServiceOpType optype=msg->optype();
                 if(optype==ServiceOpType::REGISTER)
                 {//服务注册通知
-                    LCZ_INFO("[Registry] 收到注册 method=%s host=%s:%d load=%d",
-                             msg->method().c_str(), msg->host().first.c_str(),
-                             msg->host().second, msg->load());
+                    LCZ_INFO("[trace_id=%s][Registry] 收到注册 method=%s host=%s:%d load=%d",
+                             msg->trace_id().c_str(), msg->method().c_str(),
+                             msg->host().first.c_str(), msg->host().second, msg->load());
                     _rstore->registerInstance(conn,msg->host(),msg->method(),msg->load());//注册服务
                     _discoverer->onlineNotify(msg->method(),msg->host());
                     //后续在这里处理负载均衡

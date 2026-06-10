@@ -244,7 +244,8 @@ namespace lcz_rpc{
                 const std::string& method = req->method();
                 const std::string& body = req->body();
                 const std::string& req_id = req->rid();
-                LCZ_DEBUG("ProtoRpcRouter recv method=%s", method.c_str());
+                LCZ_INFO("[trace_id=%s span=%s] ProtoRpcRouter recv method=%s",
+                         req->trace_id().c_str(), req->span_id().c_str(), method.c_str());
                 auto it = _handlers.find(method);
                 if (it == _handlers.end()) {
                     LCZ_ERROR("Proto method not found: %s", method.c_str());

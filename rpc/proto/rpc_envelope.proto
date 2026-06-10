@@ -4,8 +4,10 @@ package lcz_rpc.proto;
 
 // -------- RPC（路径二）--------
 message RpcRequestEnvelope {
-  string method = 1;
-  bytes  body   = 2;
+  string method   = 1;
+  bytes  body     = 2;
+  string trace_id = 3; // 分布式追踪 ID，client 生成，全链路透传
+  string span_id  = 4; // 当前调用跨度 ID
 }
 message RpcResponseEnvelope {
   int32 rcode = 1;
@@ -42,6 +44,7 @@ message ServiceRequestEnvelope {
   string host_ip   = 3;
   int32  host_port = 4;
   int32  load      = 5;
+  string trace_id  = 6; // 分布式追踪 ID，client 生成，全链路透传
 }
 message ServiceResponseEnvelope {
   int32  rcode = 1;

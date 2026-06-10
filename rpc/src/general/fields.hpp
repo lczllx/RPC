@@ -18,6 +18,8 @@ namespace lcz_rpc
 #define KEY_RCODE "rcode"
 #define KEY_RESULT "result"
 #define KEY_RETRY_AFTER_MS "retry_after_ms"
+#define KEY_TRACE_ID "trace_id" // 分布式追踪 ID，全链路透传
+#define KEY_SPAN_ID "span_id"   // 当前调用跨度 ID
 #define KEY_LOAD "load" // 携带负载信息
 
 // Topic 消息需要的扩展字段

@@ -56,6 +56,23 @@ namespace lcz_rpc
         {
             _data[KEY_METHOD] = method;
         }
+        // 分布式追踪 ID，全链路透传
+        std::string trace_id() const
+        {
+            return _data.get(KEY_TRACE_ID, "").asString();
+        }
+        void setTraceId(const std::string &t)
+        {
+            _data[KEY_TRACE_ID] = t;
+        }
+        std::string span_id() const
+        {
+            return _data.get(KEY_SPAN_ID, "").asString();
+        }
+        void setSpanId(const std::string &s)
+        {
+            _data[KEY_SPAN_ID] = s;
+        }
     };
     // Json 响应消息类：含 rcode、result 字段，用于响应类消息基类
     class JsonResponse:public JsonMessage
@@ -563,8 +580,12 @@ namespace lcz_rpc
         void setMethod(const std::string& m) { _envelope.set_method(m); }
         std::string body() const { return _envelope.body(); }
         void setBody(const std::string& b) { _envelope.set_body(b); }
+        std::string trace_id() const { return _envelope.trace_id(); }
+        void setTraceId(const std::string& t) { _envelope.set_trace_id(t); }
+        std::string span_id() const { return _envelope.span_id(); }
+        void setSpanId(const std::string& s) { _envelope.set_span_id(s); }
     private:
-        lcz_rpc::proto::RpcRequestEnvelope _envelope; // protobuf 请求包体，包含 method + body
+        lcz_rpc::proto::RpcRequestEnvelope _envelope; // protobuf 请求包体，包含 method + body + trace_id
         std::string _serialized;                       // 预序列化缓存，避免重复序列化
     };
 
@@ -772,6 +793,8 @@ namespace lcz_rpc
         }
         int load() const { return _envelope.load(); }
         void setLoad(int v) { _envelope.set_load(v); }
+        std::string trace_id() const { return _envelope.trace_id(); }
+        void setTraceId(const std::string& t) { _envelope.set_trace_id(t); }
     private:
         lcz_rpc::proto::ServiceRequestEnvelope _envelope; // protobuf 服务请求包体
         std::string _serialized;                           // 预序列化缓存，避免重复序列化

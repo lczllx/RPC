@@ -204,6 +204,8 @@ namespace lcz_rpc
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC_PROTO);
                 req_msg->setMethod(method_name);
+                req_msg->setTraceId(uuid()); // 分布式追踪：生成 trace_id
+                req_msg->setSpanId("0");
                 std::string body;
                 if (!req.SerializeToString(&body))
                 {
@@ -234,12 +236,14 @@ namespace lcz_rpc
                     LCZ_WARN("call_proto BACKOFF method=%s, 等待 %ldms 后重试一次", method_name.c_str(), wait_ms);
                     std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
 
-                    // 重试一次：重新构造请求再发
+                    // 重试一次：重新构造请求再发，复用 trace_id 保持调用链完整
                     auto retry_req = MessageFactory::create<ProtoRpcRequest>();
                     retry_req->setId(uuid());
                     retry_req->setMsgType(MsgType::REQ_RPC_PROTO);
                     retry_req->setMethod(method_name);
                     retry_req->setBody(body); // 复用已序列化的 body
+                    retry_req->setTraceId(req_msg->trace_id()); // 复用原始 trace_id
+                    retry_req->setSpanId("1"); // 重试标记
                     BaseMessage::ptr retry_resp;
                     if (!_requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(retry_req), retry_resp, timeout))
                     {
