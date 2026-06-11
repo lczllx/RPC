@@ -157,6 +157,8 @@ namespace lcz_rpc
                 }
                 return false;  // 别忘记有返回
             }
+            // 注入序列化器到内部客户端
+            void setSerializer(std::shared_ptr<ISerializer> s) { if (_client) _client->setSerializer(s); }
             // 发现服务，返回主机信息（支持负载均衡）
             bool serviceDiscover(const std::string &method, HostInfo &host,LoadBalanceStrategy strategy) {
                 HostDetail detail;
@@ -225,6 +227,12 @@ namespace lcz_rpc
                     _rpc_client->connect();
                 }
 
+            }
+            // 注入序列化器，默认 ProtobufSerializer
+            void setSerializer(std::shared_ptr<ISerializer> s)
+            {
+                if (_rpc_client) _rpc_client->setSerializer(s);
+                if (_discover_client) _discover_client->setSerializer(s);
             }
             // 设置负载均衡策略
             void setloadbalanceStrategy(LoadBalanceStrategy strategy)

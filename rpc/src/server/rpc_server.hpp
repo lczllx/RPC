@@ -213,6 +213,11 @@ namespace lcz_rpc
                 _rpc_router->setRateLimiter(limiter);
                 _proto_rpc_router->setRateLimiter(limiter);
             }
+            // 注入序列化器，默认 ProtobufSerializer，可替换为 FlatBuffers 等
+            void setSerializer(std::shared_ptr<ISerializer> s)
+            {
+                _server->setSerializer(s);
+            }
 
             // 优雅退出：停止上报定时器 → 停止服务器 → 等待后台线程
             void stop()

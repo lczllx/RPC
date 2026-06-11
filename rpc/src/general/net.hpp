@@ -17,6 +17,7 @@
 #include <muduo/base/CountDownLatch.h>//倒计时器
 #include <thread>
 #include <chrono>
+#include "serializer.hpp"
 #include <muduo/net/EventLoopThread.h>
 #include <muduo/base/Timestamp.h>
 
@@ -114,7 +115,7 @@ namespace lcz_rpc
             std::string data=buf->retrieveAsString(data_len);
             msg=MessageFactory::create(msgtype);
             if(msg.get()==nullptr){LCZ_ERROR("创建消息失败");return false;}
-            bool ret=msg->unserialize(data);//反序列化数据
+            bool ret=_serializer->decode(data, msg);//通过序列化器反序列化数据
             if(!ret){LCZ_ERROR("反序列化数据失败");return false;}
             msg->setId(id);
             msg->setMsgType(msgtype);
@@ -124,7 +125,7 @@ namespace lcz_rpc
           virtual std::string serialize(const BaseMessage::ptr &msg) override
           {
             //len msgtype idlen id data
-            std::string data=msg->serialize();//序列化数据
+            std::string data=_serializer->encode(msg);//通过序列化器序列化数据
             if(data.empty()){LCZ_ERROR("序列化数据失败");return "";}    
             std::string id=msg->rid();
 
@@ -150,10 +151,14 @@ namespace lcz_rpc
             output.append(data);
             return output;
           }
-          private:
-          const size_t _totalfield_len=4;      
+          public:
+          // 注入序列化器，不设置则默认 ProtobufSerializer
+          void setSerializer(std::shared_ptr<ISerializer> s) override { _serializer = std::move(s); }
+      private:
+          const size_t _totalfield_len=4;
           const size_t _msgtypefield_len=4;
           const size_t _msgidfield_len=4;
+          ISerializer::ptr _serializer = std::make_shared<ProtobufSerializer>(); // 默认 protobuf
       };
       // 协议工厂类：创建 LVProtocol 实例
       class ProtocolFactory
@@ -234,6 +239,8 @@ namespace lcz_rpc
                _server.start();//开始监听
                _baseloop.loop();//启动事件循环
             }
+            // 注入序列化器到协议层
+            void setSerializer(std::shared_ptr<ISerializer> s) override { _protocol->setSerializer(s); }
             // 优雅退出：quit() 唤醒 loop() 使其返回，线程安全
             virtual void stop() override
             {
@@ -339,6 +346,8 @@ namespace lcz_rpc
             ,_baceloop(_loopthread.startLoop())  // 独立的事件循环线程
             ,_downlatch(new muduo::CountDownLatch(1))
             ,_client(_baceloop,muduo::net::InetAddress(sip,sport),"MuduoClient"){}
+            // 注入序列化器到协议层
+            virtual void setSerializer(std::shared_ptr<ISerializer> s) override { _protocol->setSerializer(s); }
             // 连接建立/断开时更新 _connection
             void onConnection(const muduo::net::TcpConnectionPtr& conn)
             {

@@ -3,6 +3,9 @@
 #include <functional>
 #include "fields.hpp"
 #include "publicconfig.hpp"
+
+namespace lcz_rpc { class ISerializer; }
+
 namespace lcz_rpc {
     // 消息基类，所有具体消息类型都需要实现序列化、反序列化、合法性校验
     class BaseMessage {
@@ -54,6 +57,8 @@ namespace lcz_rpc {
         virtual bool onMessage(const BaseBuffer::ptr &buf, BaseMessage::ptr &msg) = 0;
         // 序列化消息
         virtual std::string serialize(const BaseMessage::ptr &msg) = 0;
+        // 注入序列化器（LVProtocol 已实现，其他协议类可空实现）
+        virtual void setSerializer(std::shared_ptr<ISerializer>) {}
     };
 
     // 连接基类
@@ -96,6 +101,8 @@ namespace lcz_rpc {
         virtual void start() = 0;
         // 优雅退出：唤醒事件循环使其从 start() 返回
         virtual void stop() {}
+        // 注入序列化器（MuduoServer 已实现）
+        virtual void setSerializer(std::shared_ptr<ISerializer>) {}
     protected:
         ConnectionCallback _cb_connection;  // 连接建立回调
         CloseCallback _cb_close;            // 连接关闭回调
@@ -128,6 +135,8 @@ namespace lcz_rpc {
         virtual BaseConnection::ptr connection() = 0;
         // 检查连接状态
         virtual bool connected() = 0;
+        // 注入序列化器，默认空实现（MuduoClient 覆盖）
+        virtual void setSerializer(std::shared_ptr<ISerializer>) {}
     protected:
         ConnectionCallback _cb_connection;  // 连接建立回调
         CloseCallback _cb_close;            // 连接关闭回调

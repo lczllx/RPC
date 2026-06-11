@@ -12,6 +12,8 @@
 #   test_message_factory_exhaustive.cc  12 种合法 MsgType 表驱动
 #   test_message_checks.cc     check() 负例
 #   test_err_reason.cc         errReason 文案
+#   test_rate_limiter.cc        TokenBucket 令牌桶限流器
+#   test_serializer.cc          ISerializer / ProtobufSerializer 编解码
 # =============================================================================
 find_package(GTest REQUIRED CONFIG)
 
@@ -22,6 +24,8 @@ add_executable(lcz_rpc_unit_tests
   test_message_factory_exhaustive.cc
   test_message_checks.cc
   test_err_reason.cc
+  test_rate_limiter.cc
+  test_serializer.cc
 )
 
 target_include_directories(lcz_rpc_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
