@@ -59,21 +59,21 @@ docker-compose up -d
 |------|------|
 | RPC 框架总行数 | 8,545（仅 `rpc/src/`，不含 muduo 子模块和 proto 生成代码） |
 | 自己写的行数 | 8,023（不含空行/注释） |
-| 单元测试 | 672 行，6 个测试文件（GTest） |
+| 单元测试 | 830+ 行，8 个测试文件，39 个测试用例（GTest） |
 | 示例代码 | 1,589 行 |
 | 源文件数 | 43（`rpc/src/` 下 .h/.hpp/.cc/.cpp） |
-| 测试覆盖范围 | LV 协议拆包/封包、消息工厂、消息校验、错误码 |
+| 测试覆盖范围 | LV 协议拆包/封包、消息工厂、消息校验、错误码、TokenBucket 限流、ISerializer 编解码 |
 
 ## 已知缺陷
 
 - **单锁瓶颈**：`Requestor::_request_desc` 用单把 `std::mutex` 保护所有请求映射，高并发下（>5 万 QPS）锁竞争显著。
 - **etcd 写放大**：每个 provider 每 3s 对每个 method 各发一次负载上报 PUT（心跳是 10s 一次），method×host 数量一大对 etcd 压力线性增长。
-- **O(n) 心跳扫描**：`RegistryServer` 每 5s 全量扫描所有 provider，无索引优化，provider 数量上万时 CPU 可观。
-- **无重试机制**：超时直接失败，调用方需自行实现幂等重试。
+- **无索引优化**：Sweep 采用 etcd 全量前缀扫描 + 内存 diff 对比，provider 数量上万时 O(N) 遍历仍有开销（已从 O(N) 时间戳扫描优化为集合 diff，但仍需全量 GET prefix）。
+- **无重试机制**：超时直接失败，调用方需自行实现幂等重试。BACKOFF 退避仅限令牌桶过载场景。
 - **静态 `pri_cursor`**：`TopicManager` 的优先级轮转游标是 `static` 变量，被所有 Topic 实例共享，多 topic 场景下轮转语义错乱。
 - **Topic 无持久化**：重启丢全部订阅关系和消息。
 - **无鉴权/加密**：无 TLS、无认证、无 token 机制。
-- **单元测试覆盖不足**：仅覆盖 LV 协议和消息层，注册中心、熔断器、选举、网络层均无单测。
+- **单元测试覆盖不足**：仅覆盖 LV 协议、消息层、令牌桶、序列化器，注册中心、熔断器、选举、网络层均无单测。
 
 ---
 
@@ -231,7 +231,7 @@ sh run_benchmark_json.sh
 
 ![心跳保活和失效剔除](flowchat/flow-heartbeat.png)
 
-心跳间隔 **10s**，**15s** 内无更新则从列表移除该实例。
+Provider 绑定 etcd **15s Lease**，心跳走 `LeaseKeepAlive` 续约。Provider 崩溃 → Lease 过期 → etcd 自动删除 key，Registry sweep 改为 etcd 前缀扫描 + 内存集合 diff 感知删除。
 
 ### 客户端超时
 
@@ -249,24 +249,62 @@ sh run_benchmark_json.sh
 - **Consumer**：发 RPC。
 - **Registry**：记有哪些实例、心跳、上下线。
 
+```mermaid
+graph TD
+    subgraph Consumer
+        RC[RpcClient] --> Call[RpcCaller]
+        Call --> Req[Requestor]
+        Call --> CB[CircuitBreaker]
+        Req --> SerC[ISerializer]
+        SerC --> LV[LVProtocol 封包]
+        LV --> TCP1[muduo TCP]
+    end
+
+    subgraph Registry
+        RS[RegistryServer] --> PDM[PwithDManager]
+        PDM --> RStore[EtcdRegistryStore]
+        RStore --> ETCD[(etcd)]
+        RS --> Leader[LeaderElection]
+    end
+
+    subgraph Provider
+        MS[MuduoServer] --> LV2[LVProtocol 拆包]
+        LV2 --> SerS[ISerializer]
+        SerS --> Router[ProtoRpcRouter]
+        Router --> TB[TokenBucket]
+        TB --> Handler[业务 Handler]
+        Router --> Reg[ClientRegistry]
+    end
+
+    TCP1 --> MS
+    Reg -.->|REGISTER/HEARTBEAT| TCP1
+    RC -.->|DISCOVER| TCP1
+    TCP1 -.->|BACKOFF| Call
+    ETCD -->|Lease 自动过期| ETCD
+```
+
 调用链：
 
 ```text
 Consumer
   -> RpcClient / RpcCaller / Requestor
-  -> 序列化（JSON 或 Protobuf）
+  -> CircuitBreaker（熔断检查）
+  -> ISerializer（序列化）
   -> LV 帧封包
   -> muduo 发 TCP
-  -> Provider 拆包、反序列化、进业务
+  -> Provider 拆包、反序列化
+  -> TokenBucket（流控）
+  -> 业务 Handler
   -> 响应往回走
 ```
 
 注册与发现：
 
 ```text
-Provider --注册/心跳--> Registry <--查列表-- Consumer
-   |                         |
-   +----- 超时未心跳则摘掉 --------+
+Provider --REGISTER/LeaseKeepAlive--> Registry <--DISCOVER-- Consumer
+   │                                         │
+   │  Lease 过期 → etcd 自动删 key             │  BACKOFF 退避重试
+   └─── Registry sweep diff 感知 ─────────────┘  CircuitBreaker 熔断隔离
 ```
 
 ---
@@ -274,7 +312,7 @@ Provider --注册/心跳--> Registry <--查列表-- Consumer
 ## 6. 功能
 
 **序列化**  
-JSON（jsoncpp）好调试。Protobuf 走 `REQ_RPC_PROTO` 等，包一大和 JSON 差距就明显。两条路都留着，想用哪个用哪个。
+JSON（jsoncpp）好调试。Protobuf 走 `REQ_RPC_PROTO` 等，包一大和 JSON 差距就明显。两条路都留着，想用哪个用哪个。序列化器通过 `ISerializer` 抽象接口插拔，默认 ProtobufSerializer，后续可替换 FlatBuffers 等零拷贝方案。
 
 **LV 协议**  
 `LVProtocol` 帧格式：
@@ -286,7 +324,7 @@ JSON（jsoncpp）好调试。Protobuf 走 `REQ_RPC_PROTO` 等，包一大和 JSO
 用 `total_len` 判断一帧是否收齐，再反序列化。`msg_type` 交给 `MessageFactory`，`id` 对应请求与响应。整型字段按网络字节序写。`total_len` 有上限，防止异常大包，具体数值见代码。
 
 **注册、心跳、选节点**  
-心跳 **10s**，Registry **5s** 扫一圈，**15s** 没心跳就当掉线。负载均衡：`ROUND_ROBIN`、`RANDOM`、`SOURCE_HASH`、`LOWEST_LOAD`。调用方式：同步、Future、回调。超时直接失败，不会自动帮你重试。
+Provider 注册时绑定 etcd **15s Lease**，心跳走 `LeaseKeepAlive` 续约。Provider 崩溃 → Lease 过期 → etcd 自动删除 key，无需应用层全量扫描。负载均衡：`ROUND_ROBIN`、`RANDOM`、`SOURCE_HASH`、`LOWEST_LOAD`。调用方式：同步、Future、回调。
 
 **注册存储后端**  
 通过 `LCZ_ETCD` 环境变量切换。未设置时走内存存储（MemoryRegistryStore），适合单机/测试；设置为 etcd 地址后走 EtcdRegistryStore，注册信息持久化到 etcd，registry 重启不丢数据。
@@ -296,6 +334,12 @@ JSON（jsoncpp）好调试。Protobuf 走 `REQ_RPC_PROTO` 等，包一大和 JSO
 
 **熔断器**  
 三态状态机（CLOSED → OPEN → HALF_OPEN → CLOSED），method×host 粒度，支持环境变量配置阈值（`LCZ_CB_FAILURE_THRESHOLD`、`LCZ_CB_OPEN_DURATION`、`LCZ_CB_HALF_OPEN_MAX`）。存储后端同样走 `LCZ_ETCD` 切换（MemoryCircuitStore / EtcdCircuitStore）。调用方在 `RpcCaller` 层自动检查熔断状态，拒绝请求直接返回 false 不等待网络超时。provider 下线时通过 `delClient()` 回调同步清理连接池和熔断器状态。
+
+**令牌桶流控**  
+Provider 端 `TokenBucket` 固定速率生成令牌，超限时返回 `BACKOFF` 错误码并附带 `retry_after_ms`。Client 收到 BACKOFF 后自动等待指定毫秒并重试一次，避免服务端过载雪崩。
+
+**分布式追踪**  
+请求携带 `trace_id`（UUID）+ `span_id`，JSON 路径通过 payload 透传，Proto 路径通过 envelope 字段透传。Client/Registry/Provider 三端日志均带 `[trace_id=xxx]`，grep 同一 ID 即可串出完整调用链定位瓶颈。
 
 **日志系统**  
 自研异步日志模块：双缓冲 + AsyncLooper 后台线程，支持 DEBUG/INFO/WARN/ERROR/FATAL 五级，输出 `[时间][线程][日志器][文件:行号][级别] 消息`。落地方式可选控制台/文件/滚动文件。
@@ -369,5 +413,8 @@ RPC/
 - [x] etcd 注册存储：EtcdRegistryStore + MemoryRegistryStore，环境变量切换
 - [x] 熔断：三态状态机，method×host 粒度，支持内存/etcd 持久化，环境变量可配
 - [x] 注册中心多实例 HA：etcd lease + CAS 选举 leader，SO_REUSEPORT 多实例同端口部署
-- [ ] 限流、重试
+- [x] Provider 心跳从 timestamp 扫描改为 etcd Lease 机制（15s TTL，LeaseKeepAlive 续约）
+- [x] 令牌桶限流：Provider 端 `TokenBucket` + `BACKOFF` 退避重试
+- [x] 分布式追踪：`trace_id` / `span_id` 全链路透传，三端日志串联
+- [x] 序列化器抽象：`ISerializer` 接口 + `ProtobufSerializer` 默认实现，支持插拔替换
 - [ ] 监控：QPS、延迟分位、错误码
