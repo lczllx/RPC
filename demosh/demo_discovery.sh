@@ -1,13 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ====== 自动检测项目根目录 ======
+find_root() {
+    local dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/rpc/CMakeLists.txt" ] || [ -f "$dir/.git" ]; then
+            echo "$dir"; return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+ROOT_DIR="$(find_root)"
+if [ -z "$ROOT_DIR" ]; then
+    echo "[ERROR] 找不到项目根目录" >&2
+    exit 1
+fi
+
 BIN_DIR="${ROOT_DIR}/rpc/build/bin"
 
 REG_PORT="${REG_PORT:-7070}"
 PROVIDER_PORT="${PROVIDER_PORT:-8889}"
-
-AUTO_KILL_PROVIDER="${AUTO_KILL_PROVIDER:-0}" # 设为 1 将自动演示下线剔除
+AUTO_KILL_PROVIDER="${AUTO_KILL_PROVIDER:-0}"
 
 REG_BIN="${BIN_DIR}/test4_registry_server"
 PROVIDER_BIN="${BIN_DIR}/test4_provider_server"
@@ -16,11 +31,6 @@ CONSUMER_BIN="${BIN_DIR}/test4_consumer_client"
 if [[ ! -x "${REG_BIN}" || ! -x "${PROVIDER_BIN}" || ! -x "${CONSUMER_BIN}" ]]; then
   echo "[ERROR] 缺少服务发现 demo 可执行文件。请先编译："
   echo "  cd ${ROOT_DIR}/rpc && mkdir -p build && cd build && cmake .. && make -j"
-  echo
-  echo "期望存在："
-  echo "  ${REG_BIN}"
-  echo "  ${PROVIDER_BIN}"
-  echo "  ${CONSUMER_BIN}"
   exit 1
 fi
 
@@ -37,7 +47,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "== Demo 2: Registry + Discovery + Heartbeat ==" 
+echo "== Demo: Registry + Discovery =="
 echo "BIN_DIR: ${BIN_DIR}"
 echo "日志目录：${ROOT_DIR}/demo-logs"
 echo
@@ -61,7 +71,7 @@ CONSUMER_PID=$!
 echo "consumer pid=${CONSUMER_PID}, log=${CONSUMER_LOG}"
 echo
 
-echo ">>> 4) 打印关键日志（可在面试时口述）"
+echo ">>> 4) 打印关键日志"
 echo "----- registry (tail 30) -----"
 tail -n 30 "${REG_LOG}" || true
 echo "----- provider (tail 30) -----"
@@ -84,21 +94,16 @@ if [[ "${AUTO_KILL_PROVIDER}" == "1" ]]; then
   if [[ "${success}" == "1" ]]; then
     kill "${PROVIDER_PID}" >/dev/null 2>&1 || true
     PROVIDER_PID=""
-    echo "已关闭 Provider，等待 20s 观察 registry 扫描/下线通知..."
+    echo "已关闭 Provider，等待 20s 观察 registry sweep/下线通知..."
     sleep 20
     echo
     echo "----- registry (tail 60) -----"
     tail -n 60 "${REG_LOG}" || true
     echo
   else
-    echo "[WARN] 12s 内未检测到“调用成功”，为避免误杀 Provider，本次不自动下线。"
-    echo "你可以："
-    echo "  - 查看 consumer.log 是否在重试/失败原因"
-    echo "  - 手动 Ctrl+C 关闭 Provider 再观察 registry"
-    echo
+    echo "[WARN] 12s 内未检测到'调用成功'，为避免误杀 Provider，本次不自动下线。"
   fi
 fi
 
 echo "Demo 运行中。按 Ctrl+C 结束（脚本会自动清理进程）。"
 wait
-

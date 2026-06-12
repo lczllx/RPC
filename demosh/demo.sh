@@ -1,12 +1,31 @@
 #!/bin/bash
 # RPC 功能演示脚本
 # 用法: ./demo.sh {etcd|offline|timeout|topic|circuit|ha|all}
+#       自动检测项目根目录，任意位置执行均可
 
 set -e
 
-BIN_DIR="$(cd "$(dirname "$0")/rpc/build" && pwd)"
-BIN="$BIN_DIR/bin"          # test1 / test4
-BIN3="$BIN_DIR/example/test/test3"  # test3 has no RUNTIME_OUTPUT_DIRECTORY
+# ====== 自动检测路径 ======
+find_root() {
+    local dir="$1"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/rpc/CMakeLists.txt" ] || [ -f "$dir/.git" ]; then
+            echo "$dir"; return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(find_root "$SCRIPT_DIR")"
+if [ -z "$ROOT_DIR" ]; then
+    echo "[ERROR] 找不到项目根目录（向上未找到 rpc/CMakeLists.txt 或 .git）" >&2
+    exit 1
+fi
+
+
+BIN="$ROOT_DIR/rpc/build/bin"
+BIN3="$ROOT_DIR/rpc/build/example/test/test3"
 LOG_DIR="/tmp/rpc-demo-logs"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -15,9 +34,9 @@ step()  { echo -e "\n${BOLD}${CYAN}[$1/$TOTAL]${NC} ${BOLD}$2${NC}"; }
 info()  { echo -e "  ${GREEN}→${NC} $*"; }
 warn()  { echo -e "  ${RED}→${NC} $*"; }
 
-COMPOSE_DIR="$(cd "$(dirname "$0")" && pwd)"
+COMPOSE_DIR="$ROOT_DIR"
 
-# 检查端口是否已被占用（兼容 docker compose 场景）：如已占用，返回 0，后续跳过本地启动
+# 检查端口是否已被占用（兼容 docker compose 场景）
 port_listening() { ss -tln | grep -q ":${1} "; }
 
 # 检查 docker-compose 是否管理着指定服务且处于运行状态
@@ -34,12 +53,10 @@ trap cleanup EXIT
 
 demo_etcd() {
     TOTAL=6
-    echo -e "${BOLD}=== 演示: etcd 持久化 — registry 重启状态不丢 ===${NC}"
-    echo "场景: provider 注册到 registry → kill registry → 重启 registry → 注册信息仍在 etcd 中"
-    #echo "意义: 面试官问'注册中心挂了怎么办'，你的答案'数据在 etcd，重启即恢复'"
+    echo -e "${BOLD}=== 演示: etcd 持久化 + Lease 心跳 — registry 重启状态不丢 ===${NC}"
+    echo "场景: provider 注册（绑定 15s Lease）→ kill registry → 重启 registry → 注册信息仍在 etcd 中"
     echo ""
 
-    # 检查 etcd：先查宿主机进程，再查 TCP 端口（兼容 docker compose 场景）
     if pgrep -x etcd >/dev/null 2>&1; then
         info "etcd 进程已在宿主机运行"
     elif curl -s http://127.0.0.1:2379/version >/dev/null 2>&1; then
@@ -51,7 +68,6 @@ demo_etcd() {
     fi
     export LCZ_ETCD=http://127.0.0.1:2379
 
-    # 判断 registry 是 docker 管理还是本地进程
     local DOCKER_MODE=false
     if compose_running registry; then
         DOCKER_MODE=true
@@ -61,29 +77,27 @@ demo_etcd() {
         step 1 "registry 由 docker-compose 管理（端口 8080）"
         info "跳过本地启动，后续通过 docker-compose stop/start 控制"
     else
-        step 1 "启动 registry（etcd 后端）"
+        step 1 "启动 registry（etcd 后端，Lease 15s TTL）"
         "$BIN/test1_registry_server" > "$LOG_DIR/etcd_reg.log" 2>&1 &
         REG_PID=$!
         sleep 2
         info "registry 启动 (pid=$REG_PID, LCZ_ETCD=http://127.0.0.1:2379)"
     fi
 
-    # 起 provider，注册 add 服务
     if compose_running provider || port_listening 8889; then
         step 2 "复用已有 provider（端口 8889 已监听，跳过本地启动）"
         PROV_PID="SKIPPED"
         info "provider 来自 docker compose，无需本地启动"
     else
-        step 2 "启动 provider 并注册到 registry"
+        step 2 "启动 provider 并注册到 registry（绑定 15s Lease）"
         "$BIN/test1_rpc_server" > "$LOG_DIR/etcd_prov.log" 2>&1 &
         PROV_PID=$!
         sleep 3
-        info "provider 已注册 add 方法到 etcd"
+        info "provider 已注册 add 方法到 etcd（Lease 15s TTL）"
     fi
     info "etcd 中存储:"
     etcdctl get --prefix /lcz-rpc/ 2>/dev/null | head -8 || true
 
-    # 杀 registry
     if $DOCKER_MODE; then
         step 3 "停掉 registry 容器（docker-compose stop registry）"
         cd "$COMPOSE_DIR" && docker-compose stop registry 2>&1 | tail -1
@@ -96,7 +110,6 @@ demo_etcd() {
         info "registry 已停止"
     fi
 
-    # 重启 registry
     if $DOCKER_MODE; then
         step 4 "重启 registry 容器（docker-compose start registry）"
         cd "$COMPOSE_DIR" && docker-compose start registry 2>&1 | tail -1
@@ -110,7 +123,6 @@ demo_etcd() {
         info "registry 重启完成 (pid=$REG_PID)"
     fi
 
-    # 验证 client 仍能发现服务
     step 5 "client 发起调用，验证服务可发现"
     timeout 10 "$BIN/test1_rpc_client" > "$LOG_DIR/etcd_client.log" 2>&1 || true
     if grep -q "result:99" "$LOG_DIR/etcd_client.log"; then
@@ -119,8 +131,7 @@ demo_etcd() {
         warn "调用失败，查看 $LOG_DIR/etcd_client.log"
     fi
 
-    # 验证 etcd 数据仍在
-    step 6 "验证 etcd 中注册信息完好"
+    step 6 "验证 etcd 中注册信息完好（Lease 未过期）"
     info "etcd 数据:"
     etcdctl get --prefix /lcz-rpc/ 2>/dev/null | head -8 || true
 
@@ -133,18 +144,15 @@ demo_etcd() {
 demo_offline() {
     TOTAL=5
     echo -e "${BOLD}=== 演示: 死节点自动下线 ===${NC}"
-    echo "场景: provider 注册 → kill provider → registry 心跳超时自动剔除"
-    echo "意义: provider 挂了 client 不会被调到，无需人工介入"
+    echo "场景: provider 注册 → kill provider → registry sweep 超时自动剔除"
     echo ""
 
-    # 起 registry（memory 模式，心跳间隔 5s，超时 15s）
-    step 1 "启动 registry（心跳扫描间隔 5s，15s 无心跳即剔除）"
+    step 1 "启动 registry（memory 模式，sweep 间隔 5s，15s 无心跳即剔除）"
     "$BIN/test4_registry_server" > "$LOG_DIR/off_reg.log" 2>&1 &
     REG_PID=$!
     sleep 1
     info "registry 启动，监听 7070"
 
-    # 起 provider
     step 2 "启动 provider 并注册"
     "$BIN/test4_provider_server" > "$LOG_DIR/off_prov.log" 2>&1 &
     PROV_PID=$!
@@ -152,7 +160,6 @@ demo_offline() {
     info "provider 已注册 (心跳间隔 10s)"
     grep "注册成功\|收到注册" "$LOG_DIR/off_reg.log" | tail -2
 
-    # 验证 client 能调通
     step 3 "client 调用 add(10,20)，确认连通"
     timeout 12 "$BIN/test4_consumer_client" > "$LOG_DIR/off_client.log" 2>&1 || true
     if grep -q "结果: 30\|调用成功" "$LOG_DIR/off_client.log"; then
@@ -161,15 +168,13 @@ demo_offline() {
         warn "调用失败，查看 $LOG_DIR/off_client.log"
     fi
 
-    # 杀 provider
-    step 4 "杀掉 provider，等待 registry 心跳超时剔除"
+    step 4 "杀掉 provider，等待 registry sweep 超时剔除"
     kill $PROV_PID 2>/dev/null || true
     info "provider 已杀掉 (pid=$PROV_PID)"
     info "等待 20s（心跳 10s + 超时判定 15s）..."
     sleep 20
     grep -E "发现过|剔除|下线" "$LOG_DIR/off_reg.log" | tail -5
 
-    # 验证剔除
     step 5 "验证 registry 已移除死掉的 provider"
     grep -c "过期\|剔除\|下线" "$LOG_DIR/off_reg.log" >/dev/null 2>&1 \
         && info "provider 已被标记为过期并剔除 ✓" \
@@ -185,7 +190,6 @@ demo_timeout() {
     echo "场景: slow provider 执行 3s，client 设置 1s 超时"
     echo ""
 
-    # 起 registry（复用 docker 已有的）
     if compose_running registry || port_listening 8080; then
         step 1 "复用已有 registry（端口 8080 已监听，跳过本地启动）"
         REG_PID="SKIPPED"
@@ -196,7 +200,6 @@ demo_timeout() {
         sleep 2
     fi
 
-    # 起慢 provider（sleep 10s 再返回）
     if compose_running provider || port_listening 8889; then
         step 2 "端口 8889 已被占用（docker compose provider），跳过慢 provider 启动"
         warn "本演示需要慢 provider 绑定 8889，与已有服务冲突"
@@ -209,12 +212,10 @@ demo_timeout() {
     sleep 2
     info "慢 provider 已注册 (每次调用睡眠 10s)"
 
-    # 起 timeout client（5s 超时）
     step 3 "client 设置 5s 超时，对比结果"
     timeout 15 "$BIN/test1_timeout_test_client" > "$LOG_DIR/to_client.log" 2>&1 || true
     sleep 2
 
-    # 展示结果
     step 4 "结果"
     echo -e "  ${CYAN}=== 超时 client 输出 ===${NC}"
     grep -E "超时|成功|失败|耗时|timeout" "$LOG_DIR/to_client.log" || cat "$LOG_DIR/to_client.log"
@@ -229,10 +230,9 @@ demo_timeout() {
 demo_circuit() {
     TOTAL=5
     echo -e "${BOLD}=== 演示: 熔断器 — 故障自动隔离与恢复 ===${NC}"
-    echo "场景: server 前3次正常 → 接下来故意慢响应(触发客户端超时) → 熔断器打开拒绝请求 → 冷却后 HALF_OPEN 探测 → server 恢复正常 → 熔断器关闭"
+    echo "场景: server 前3次正常 → 故意慢响应(触发超时) → 熔断器 OPEN → 冷却后 HALF_OPEN 探测 → 恢复 CLOSED"
     echo ""
 
-    # 短周期便于演示: 5次失败触发熔断, 8s冷却期
     export LCZ_CB_FAILURE_THRESHOLD=5
     export LCZ_CB_OPEN_DURATION=8
     export LCZ_CB_HALF_OPEN_MAX=1
@@ -338,7 +338,6 @@ demo_ha() {
     TOTAL=6
     echo -e "${BOLD}=== 演示: 注册中心多实例 HA ===${NC}"
     echo "场景: 启动 3 个 registry 实例（同一端口 SO_REUSEPORT）→ etcd lease 选举 leader → 杀 leader → follower 自动接管"
-    echo "意义: 注册中心本身挂了不影响服务，其他实例自动接管，外部无感知"
     echo ""
 
     if pgrep -x etcd >/dev/null 2>&1; then
@@ -352,7 +351,6 @@ demo_ha() {
     fi
     export LCZ_ETCD=http://127.0.0.1:2379
 
-    # HA 演示需要启动 3 个本地进程共占同一端口（SO_REUSEPORT），与 docker compose 管理的 registry 互斥
     if compose_running registry || port_listening 8080; then
         warn "端口 8080 已被占用（docker compose registry 正在运行）"
         warn "HA 演示需要同时启动 3 个本地 registry 实例共用 8080 端口，与已有服务冲突"
@@ -360,7 +358,6 @@ demo_ha() {
         return 1
     fi
 
-    # 记录每个实例的 pid，用于精确控制
     HA_PIDS=()
     HA_LOGS=("$LOG_DIR/ha_node1.log" "$LOG_DIR/ha_node2.log" "$LOG_DIR/ha_node3.log")
 
@@ -379,7 +376,6 @@ demo_ha() {
         grep -E "成为 leader|退为 follower|选举已启动" "$log" | tail -5
     done
 
-    # 找到 leader 的 pid
     LEADER_LOG=""
     for log in "${HA_LOGS[@]}"; do
         if grep -q "成为 leader" "$log" 2>/dev/null; then
@@ -393,7 +389,6 @@ demo_ha() {
         kill "${HA_PIDS[@]}" 2>/dev/null || true
         return 1
     fi
-    # 从日志提取 leader 的 instance 信息（hostname:pid）
     LEADER_INFO=$(grep "成为 leader" "$LEADER_LOG" | tail -1)
     info "当前 leader: $LEADER_INFO"
 
@@ -406,7 +401,6 @@ demo_ha() {
     else
         warn "provider 注册可能失败，检查 $LOG_DIR/ha_prov.log"
     fi
-    # 验证 etcd 中有注册数据
     info "etcd 中注册数据:"
     etcdctl get --prefix /lcz-rpc/v1/providers/add/ 2>/dev/null | head -6 || true
 
@@ -419,10 +413,8 @@ demo_ha() {
     fi
 
     step 5 "杀掉 leader 实例 → etcd lease 5s 后过期 → key 自动删除"
-    # leader 日志中"instance=hostname:PID"，提取 PID
     LEADER_PID=$(echo "$LEADER_INFO" | grep -oP 'instance=\S+' | grep -oP '\d+$')
     if [ -z "$LEADER_PID" ]; then
-        # fallback: 从 leader 日志文件名推断
         for i in 0 1 2; do
             if [ "${HA_LOGS[$i]}" = "$LEADER_LOG" ]; then
                 LEADER_PID=${HA_PIDS[$i]}
@@ -442,18 +434,15 @@ demo_ha() {
         grep -E "成为 leader|退为 follower" "$log" | tail -3
     done
 
-    # 检查是否有新 leader
     NEW_LEADER=$(grep -l "成为 leader" "${HA_LOGS[@]}" 2>/dev/null | head -1)
     if [ -n "$NEW_LEADER" ] && [ "$NEW_LEADER" != "$LEADER_LOG" ]; then
         info "follower 接管成功！新 leader: $(grep '成为 leader' "$NEW_LEADER" | tail -1)"
-        info "故障转移时间 ≈ $(grep -c 'tick\|续约\|竞选' "$NEW_LEADER" 2>/dev/null | head -1) 个 tick 内完成"
     elif [ -n "$NEW_LEADER" ]; then
         info "leader 未切换（原 leader 可能在 lease 过期前被 kill 的实例还未清理）"
     else
         warn "未检测到新 leader，检查剩余实例日志"
     fi
 
-    # 清理：杀掉剩余 registry 实例和 provider
     for pid in "${HA_PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
@@ -483,7 +472,6 @@ case "${1:-}" in
         demo_ha
         ;;
     all)
-        # 检测 docker compose 模式下哪些演示会冲突
         if compose_running registry || compose_running provider; then
             warn "检测到 docker compose 服务正在运行，以下演示会冲突："
             compose_running registry && warn "  - demo_ha（需要单机启 3 个 registry 共占 8080 端口）"
@@ -496,7 +484,7 @@ case "${1:-}" in
             warn "  docker-compose start  # 跑完后恢复"
             echo ""
             info "也可以跳过冲突演示，只跑不冲突的:"
-            info "  ./demo.sh etcd      # 已适配 docker，会用 stop/start 控制容器"
+            info "  ./demo.sh etcd      # 已适配 docker"
             info "  ./demo.sh offline   # 使用独立端口 7070，无冲突"
             info "  ./demo.sh topic     # 使用独立端口 7070，无冲突"
             exit 1
@@ -512,19 +500,18 @@ case "${1:-}" in
     *)
         echo "用法: ./demo.sh {etcd|offline|timeout|topic|circuit|ha|all}"
         echo ""
-        echo "  etcd    — 演示 registry 重启后 etcd 数据不丢，服务可继续发现"
-        echo "  offline — 演示 provider 挂掉后 registry 自动检测并剔除"
-        echo "  timeout — 演示慢 provider 超时控制，client 1s 超时立即返回"
-        echo "  topic   — 演示发布订阅 5 种转发策略（broadcast/priority/fanout/hash/redundant）"
-        echo "  circuit — 演示熔断器：连续失败触发熔断 → 冷却后 HALF_OPEN 探测 → 恢复"
-        echo "  ha      — 演示多实例 HA：3 个 registry 通过 etcd 选举 leader，杀 leader 后 follower 接管"
+        echo "  etcd    — Lease 心跳 + etcd 持久化，registry 重启数据不丢"
+        echo "  offline — provider 挂掉后 registry 超时自动剔除"
+        echo "  timeout — 慢 provider 超时控制，client 超时立即返回"
+        echo "  topic   — 发布订阅 5 种转发策略（broadcast/priority/fanout/hash/redundant）"
+        echo "  circuit — 熔断器：连续失败 OPEN → 冷却 HALF_OPEN → 恢复 CLOSED"
+        echo "  ha      — 多实例 HA：3 个 registry etcd Lease 选举 leader，杀 leader 自动接管"
         echo "  all     — 全部跑一遍"
         echo ""
         echo "  注意: etcd / ha 演示需要先启动 etcd 服务"
-        echo "    宿主机模式: etcd --listen-client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379 &"
-        echo "    Docker 模式: docker-compose up -d etcd"
+        echo "    宿主机: etcd --listen-client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379 &"
+        echo "    Docker: docker-compose up -d etcd"
         echo ""
-        echo "  all 模式与 docker compose 互斥，如 docker 服务在运行请先 docker-compose stop"
         echo "  日志: $LOG_DIR/"
         ;;
 esac

@@ -1,16 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ====== 自动检测项目根目录 ======
+find_root() {
+    local dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/rpc/CMakeLists.txt" ] || [ -f "$dir/.git" ]; then
+            echo "$dir"; return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+ROOT_DIR="$(find_root)"
+if [ -z "$ROOT_DIR" ]; then
+    echo "[ERROR] 找不到项目根目录" >&2
+    exit 1
+fi
+
 BENCH_DIR="${ROOT_DIR}/rpc/example/benchmark"
 BIN_DIR="${ROOT_DIR}/rpc/build/bin"
 
 if [[ ! -d "${BIN_DIR}" ]]; then
-  echo "[ERROR] 未找到 ${BIN_DIR}，请先编译：cd ${ROOT_DIR}/rpc && mkdir -p build && cd build && cmake .. && make -j"
+  echo "[ERROR] 未找到 ${BIN_DIR}，请先编译"
   exit 1
 fi
 
-echo "== Demo 1: Benchmark（JSON vs Protobuf）=="
+echo "== Demo: Benchmark（JSON vs Protobuf）=="
 echo "BIN_DIR: ${BIN_DIR}"
 echo "BENCH_DIR: ${BENCH_DIR}"
 echo
@@ -33,4 +49,3 @@ echo ">>> 2) 运行 Protobuf benchmark"
 echo
 
 echo "完成"
-
