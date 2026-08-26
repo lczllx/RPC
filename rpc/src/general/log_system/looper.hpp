@@ -13,6 +13,7 @@
 #include<mutex>
 #include<atomic>
 #include<thread>
+#include <stop_token>
 #include "buffer.hpp"
 #include "Logger.hpp"
 
@@ -29,14 +30,14 @@ namespace lcz
     {
         public:
         using ptr = std::shared_ptr<AsyncLooper>;
-        AsyncLooper(const Functor &func,AsyncType type=lcz::AsyncType::ASYNC_SAFE):_callback(func),_looper_type(type),_stop(false),_thread(std::thread(&AsyncLooper::threadentry,this)){};
+        AsyncLooper(const Functor &func,AsyncType type=lcz::AsyncType::ASYNC_SAFE):_callback(func),_looper_type(type),_thread(std::jthread([this](std::stop_token st){ threadentry(st); })){};
         ~AsyncLooper(){stop();}
         void push(std::string_view data,size_t len)
         {
             std::unique_lock<std::mutex> lock(_mutex);
            //看是否可以向缓冲区加入数据集
            if(_looper_type==AsyncType::ASYNC_SAFE)
-            _cond_pro.wait(lock,[&](){return _stop || len<=_pro_buf.abletowritelen();});
+            _cond_pro.wait(lock,[&](){return _thread.get_stop_token().stop_requested() || len<=_pro_buf.abletowritelen();});
            //将数据放进生产缓冲区
             _pro_buf.push(data.data(),len);
            //唤醒消费线程对缓冲区数据进行处理
@@ -44,8 +45,8 @@ namespace lcz
 
         }
         void stop()
-        {         
-             _stop = true;
+        {
+             _thread.request_stop();
             _cond_con.notify_all();//唤醒所有工作线程
             _cond_pro.notify_all();
             if (_thread.joinable()) {
@@ -62,7 +63,7 @@ namespace lcz
         }
        private:
        //线程入口函数 对消费缓冲区中的数据进行处理，处理后，初始化缓冲区，交换缓冲区
-       void threadentry()
+       void threadentry(std::stop_token st)
        {
         // time_t last_sync_time = time(nullptr);
         // const time_t sync_interval = 1; // 每秒同步一次
@@ -74,9 +75,9 @@ namespace lcz
                     //判断生产缓冲区有没有数据，有就交换，没有则阻塞
                     std::unique_lock<std::mutex> lock(_mutex);
                     //退出标志被设置且生产缓冲区中没有数据再退出
-                    if (_stop && _pro_buf.empty()) break;
+                    if (st.stop_requested() && _pro_buf.empty()) break;
 
-                    _cond_con.wait(lock, [&](){ return _stop || !_pro_buf.empty(); });
+                    _cond_con.wait(lock, [&](){ return st.stop_requested() || !_pro_buf.empty(); });
                                         
                     _pro_buf.swap(_con_buf);
                     
@@ -121,12 +122,11 @@ namespace lcz
 
         private:
         AsyncType _looper_type;
-        std::atomic<bool> _stop;//停止标志
         Buffer _pro_buf;//生产缓冲区
         Buffer _con_buf;//消费缓冲区
         std::mutex _mutex;//互斥锁
         std::condition_variable _cond_pro;//生产者等待队列条件变量
         std::condition_variable _cond_con;//消费者等待队列条件变量
-        std::thread _thread;//异步工作器对应的工作线程
+        std::jthread _thread;//异步工作器对应的工作线程
     };
 }

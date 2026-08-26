@@ -8,6 +8,7 @@
 #include <thread>
 #include <atomic>
 #include <condition_variable>
+#include <stop_token>
 #include <chrono>
 #include "circuit_store.hpp"
 
@@ -46,7 +47,7 @@ namespace lcz_rpc
 
         private:
             static std::string cacheKey(std::string_view method, std::string_view host);
-            void workerLoop();
+            void workerLoop(std::stop_token st);
 
             ICircuitStateStore::ptr _underlying; // 底层持久化 store（EtcdCircuitStore 或 MemoryCircuitStore）
 
@@ -60,8 +61,7 @@ namespace lcz_rpc
             std::mutex _removed_mutex;                 // 保护 _removed
             std::unordered_set<std::string> _removed;  // 已删除 key 的 tombstone，抑制在途刷盘
 
-            std::thread _worker;                       // 后台刷盘线程
-            std::atomic<bool> _running{true};          // 控制 worker 退出
+            std::jthread _worker;                      // 后台刷盘线程
             std::chrono::milliseconds _flush_interval; // 刷盘间隔
         };
 

@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <atomic>
 #include <thread>
+#include <stop_token>
 #include <vector>
 #include <unordered_map>
 #include <mutex>
@@ -95,7 +96,8 @@ namespace lcz_rpc
             }
             for (int i = 0; i < _worker_count; ++i)
             {
-                _workers[i]->thread = std::thread(&ShmServer::workerLoop, this, i);
+                _workers[i]->thread = std::jthread([this, i](std::stop_token token)
+                                                   { workerLoop(token, i); });
             }
 
             LCZ_INFO("[ShmServer] listening on %s, workers=%d", _notify_path.c_str(), _worker_count);
@@ -184,6 +186,11 @@ namespace lcz_rpc
         void stop() override
         {
             _running = false;
+            for (auto &w : _workers)
+            {
+                if (w->thread.joinable())
+                    w->thread.request_stop();
+            }
             if (_listen_fd >= 0)
             {
                 shutdown(_listen_fd, SHUT_RDWR); // 强制唤醒阻塞在 accept() 的线程
@@ -218,12 +225,12 @@ namespace lcz_rpc
         {
             int epfd = -1;
             int wake_pipe[2] = {-1, -1};
-            std::thread thread;
+            std::jthread thread;
             std::mutex mtx;
             std::unordered_map<int, std::shared_ptr<ClientEntry>> clients;
         };
 
-        void workerLoop(int worker_id)
+        void workerLoop(std::stop_token token, int worker_id)
         {
             auto &w = _workers[worker_id];
             const int MAX_EVENTS = 64;
@@ -233,7 +240,7 @@ namespace lcz_rpc
 
             LCZ_INFO("[ShmServer] worker %d started, epfd=%d", worker_id, w->epfd);
 
-            while (_running)
+            while (!token.stop_requested())
             {
                 int n = epoll_wait(w->epfd, events, MAX_EVENTS, 500);
                 if (n < 0)

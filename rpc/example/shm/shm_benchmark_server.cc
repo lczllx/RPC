@@ -50,11 +50,12 @@ int main() {
     });
 
     // 后台线程跑 server（start 阻塞在 epoll 轮询循环）
-    std::thread([&]() { server.start(); }).detach();
+    std::jthread srv_thread([&]() { server.start(); });
 
     std::cout << "[shm_bench_server] 共享内存已创建 (lcz_shm_bench), 等待请求..." << std::endl;
     while (running) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
     server.stop();
+    srv_thread.join();
     std::cout << "[shm_bench_server] 退出" << std::endl;
     return 0;
 }

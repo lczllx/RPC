@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <thread>
 #include <atomic>
+#include <stop_token>
 
 namespace lcz_rpc
 {
@@ -81,8 +82,8 @@ namespace lcz_rpc
             if (_cb_connection)
                 _cb_connection(conn);
 
-            _worker = std::thread([this]()
-                                  { responseLoop(); });
+            _worker = std::jthread([this](std::stop_token st)
+                                   { responseLoop(st); });
             LCZ_INFO("[ShmClient] connected, shm=%s req_fd=%d resp_fd=%d",
                      _shm_name.c_str(), req_fd, resp_fd);
         }
@@ -98,7 +99,7 @@ namespace lcz_rpc
 
         void shutdown() override
         {
-            _running = false;
+            _worker.request_stop();
             if (_worker.joinable())
                 _worker.join();
             _channel.destroy();
@@ -109,7 +110,7 @@ namespace lcz_rpc
         ~ShmClient() { shutdown(); }
 
     private:
-        void responseLoop()
+        void responseLoop(std::stop_token st)
         {
             int epfd = epoll_create1(0);
             struct epoll_event ev;
@@ -117,12 +118,11 @@ namespace lcz_rpc
             ev.data.fd = _channel.resp_notify_fd();
             epoll_ctl(epfd, EPOLL_CTL_ADD, _channel.resp_notify_fd(), &ev);
 
-            _running = true;
             std::string body;
             lcz_rpc::MsgType type;
             const int resp_fd = _channel.resp_notify_fd();
             LCZ_INFO("[ShmClient] responseLoop started, resp_fd=%d", resp_fd);
-            while (_running)
+            while (!st.stop_requested())
             {
                 struct epoll_event events[1];
                 int n = epoll_wait(epfd, events, 1, 500);
@@ -153,8 +153,7 @@ namespace lcz_rpc
         ShmConnection::ptr _conn;
         std::string _notify_path;
         std::string _shm_name; // 握手后由 Server 分配
-        std::thread _worker;
-        std::atomic<bool> _running{false};
+        std::jthread _worker;
     };
 
 } // namespace lcz_rpc

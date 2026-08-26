@@ -39,9 +39,10 @@ int main() {
         std::cout << "[server_proto] send result=" << add_resp.result() << std::endl;
     });
 
-    std::thread([&]() { server.start(); }).detach();
+    std::jthread srv_thread([&]() { server.start(); });
     std::cout << "[server_proto] Protobuf 零拷贝服务已启动 (4 workers)" << std::endl;
     while (running) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
     server.stop();
+    srv_thread.join();
     return 0;
 }

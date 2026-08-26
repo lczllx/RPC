@@ -44,11 +44,12 @@ int main() {
         conn->send(resp);
     });
 
-    std::thread([&]() { server.start(); }).detach();
+    std::jthread srv_thread([&]() { server.start(); });
 
     std::cout << "[shm_bench_server_zc] FlatBuffers 零拷贝服务已启动, 等待请求..." << std::endl;
     while (running) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
     server.stop();
+    srv_thread.join();
     std::cout << "[shm_bench_server_zc] 退出" << std::endl;
     return 0;
 }

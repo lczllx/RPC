@@ -11,7 +11,7 @@ namespace lcz_rpc
             : _underlying(std::move(underlying)), _flush_interval(flush_interval)
         {
             // 启动后台刷盘线程
-            _worker = std::thread(&AsyncCircuitStore::workerLoop, this);
+            _worker = std::jthread([this](std::stop_token st) { workerLoop(st); });
             LCZ_INFO("[AsyncCircuitStore] 后台写入线程启动, flush_interval=%lldms",
                      static_cast<long long>(flush_interval.count()));
         }
@@ -19,7 +19,7 @@ namespace lcz_rpc
         AsyncCircuitStore::~AsyncCircuitStore()
         {
             // 通知后台线程退出
-            _running = false;
+            _worker.request_stop();
             _cv.notify_all();
             if (_worker.joinable())
                 _worker.join();
@@ -130,18 +130,18 @@ namespace lcz_rpc
             return _underlying->remove(method, host);
         }
 
-        void AsyncCircuitStore::workerLoop()
+        void AsyncCircuitStore::workerLoop(std::stop_token st)
         {
-            while (_running)
+            while (!st.stop_requested())
             {
                 std::unordered_map<std::string, CircuitStatus> batch;
                 {
                     std::unique_lock<std::mutex> lock(_pending_mutex);
                     // 等待 _flush_interval 或立即被 save 唤醒
-                    _cv.wait_for(lock, _flush_interval, [this]
-                                 { return !_running || !_pending.empty(); });
+                    _cv.wait_for(lock, _flush_interval, [this, &st]
+                                 { return st.stop_requested() || !_pending.empty(); });
 
-                    if (!_running && _pending.empty())
+                    if (st.stop_requested() && _pending.empty())
                         break;
 
                     // swap 出待刷数据，缩临界区

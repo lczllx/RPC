@@ -17,6 +17,7 @@
 #include "muduo/net/Channel.h"
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <atomic>
 #include <memory>
@@ -42,20 +43,23 @@ namespace lcz_rpc
 
         void start() override
         {
-            int listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-            if (listen_fd < 0)
+            _listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+            if (_listen_fd < 0)
             {
                 LCZ_ERROR("[ShmServerProto] socket failed");
                 return;
             }
+            // accept 超时 500ms：bind 之后再设，避免干扰 socket 创建
+            struct timeval tv = {0, 500000};
+            setsockopt(_listen_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             struct sockaddr_un addr = {};
             addr.sun_family = AF_UNIX;
             strncpy(addr.sun_path, _notify_path.c_str(), sizeof(addr.sun_path) - 1);
             unlink(_notify_path.c_str());
-            if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(listen_fd, _max_clients) < 0)
+            if (bind(_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0 || listen(_listen_fd, _max_clients) < 0)
             {
                 LCZ_ERROR("[ShmServerProto] bind/listen failed");
-                close(listen_fd);
+                close(_listen_fd);
                 return;
             }
 
@@ -74,9 +78,13 @@ namespace lcz_rpc
             int next_id = 0, round_robin = 0;
             while (_running)
             {
-                int conn_fd = accept(listen_fd, nullptr, nullptr);
+                int conn_fd = accept(_listen_fd, nullptr, nullptr);
                 if (conn_fd < 0)
-                    break;
+                {
+                    if (!_running)
+                        break;
+                    continue;
+                }
                 if (next_id >= _max_clients)
                 {
                     close(conn_fd);
@@ -149,11 +157,21 @@ namespace lcz_rpc
                          next_id - 1, (round_robin - 1) % _worker_count, shm_name.c_str());
             }
 
-            close(listen_fd);
+            close(_listen_fd);
+            _listen_fd = -1;
             unlink(_notify_path.c_str());
         }
 
-        void stop() override { _running = false; }
+        void stop() override
+        {
+            _running = false;
+            if (_listen_fd >= 0)
+            {
+                shutdown(_listen_fd, SHUT_RDWR); // 强制唤醒阻塞在 accept() 的线程
+                close(_listen_fd);
+                _listen_fd = -1;
+            }
+        }
         ~ShmServerProto()
         {
             _running = false;
@@ -175,6 +193,7 @@ namespace lcz_rpc
         std::string _notify_path, _shm_prefix;
         size_t _req_size, _resp_size;
         int _max_clients, _worker_count;
+        int _listen_fd = -1;
         std::atomic<bool> _running{false};
 
         struct Worker

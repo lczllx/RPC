@@ -74,10 +74,11 @@ int main() {
         METRICS_HISTO("rpc_request_duration_us", "RPC handler latency in us", ls).observe(lat_us);
     });
 
-    std::thread([&]() { server.start(); }).detach();
+    std::jthread srv_thread([&]() { server.start(); });
     std::cout << "[server] SHM Proto ZC 服务已启动，等待请求... (Ctrl+C 退出)" << std::endl;
     while (running) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
     server.stop();
+    srv_thread.join();
     lcz_rpc::metrics::MetricsServer::stop();
     return 0;
 }

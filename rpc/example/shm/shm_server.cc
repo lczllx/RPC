@@ -41,13 +41,14 @@ int main() {
     });
 
     // 后台线程跑 server（start 阻塞在轮询循环）
-    std::thread([&]() {
+    std::jthread srv_thread([&]() {
         server.start();
-    }).detach();
+    });
 
     std::cout << "[server] 共享内存服务已启动，支持多客户端，等待请求... (Ctrl+C 退出)" << std::endl;
     while (running) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
     server.stop();
+    srv_thread.join();
     std::cout << "[server] 退出" << std::endl;
     return 0;
 }

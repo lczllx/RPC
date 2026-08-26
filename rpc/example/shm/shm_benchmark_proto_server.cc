@@ -42,9 +42,10 @@ int main() {
         conn->send(resp);
     });
 
-    std::thread([&]() { server.start(); }).detach();
+    std::jthread srv_thread([&]() { server.start(); });
     std::cout << "[shm_bench_proto_server] Protobuf 零拷贝服务已启动" << std::endl;
     while (running) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); }
     server.stop();
+    srv_thread.join();
     return 0;
 }
