@@ -21,25 +21,28 @@ Author: lczllx · Language: C++20 · Network: muduo · Transport: TCP & SHM zero
 
 ## Performance: lyqtRpc vs brpc
 
-Test environment: 4C8G cloud VM, Ubuntu 22.04, g++ 12.3.0, all Protobuf, echo payload. brpc 1.17.0.
+Test environment: 4C8G cloud VM, Ubuntu 22.04, g++ 11.4.0, all Protobuf, echo payload. brpc 1.17.0.
 
 ### Single-thread latency & throughput
 
 | Payload | brpc TCP | lyqtRpc TCP Proto | lyqtRpc SHM Proto ZC |
 |---|---:|---:|---:|
-| 16B QPS | ~14,000 | 10,706 | **25,216** |
-| 16B P50 | ~68μs | 90μs | **28μs** |
-| 64KB QPS | ~4,300 | 2,059 | **11,552** |
-| 64KB P50 | ~220μs | 459μs | **68μs** |
+| 16B QPS | 17,859 | 13,556 | **26,725** |
+| 16B P90 | 61μs | 83μs | **30μs** |
+| 16B P99 | 74μs | 100μs | **38μs** |
+| 64KB QPS | 6,268 | 2,751 | **12,735** |
+| 64KB P90 | 171μs | 397μs | **71μs** |
+| 64KB P99 | 237μs | 483μs | **137μs** |
 
 ### 4-thread concurrency
 
 | Metric | brpc TCP | lyqtRpc TCP Proto | lyqtRpc SHM Proto ZC |
 |---|---:|---:|---:|
-| QPS | ~48,000 | 35,660 | **123,250** |
-| P50 | ~82μs | 105μs | **17μs** |
+| QPS | 44,534 | 38,834 | **153,916** |
+| P90 | 129μs | 125μs | **23μs** |
+| P99 | 233μs | 189μs | **39μs** |
 
-SHM single-thread latency is 41% of brpc, dropping to 21% at 4 threads. The ~30% gap on the TCP path stems from bthread coroutines, IOBuf zero-copy chains, and baidu_std multiplexing in brpc.
+SHM latency is well below brpc: single-thread P99 is ≈51% of brpc, dropping to ≈17% at 4 threads. TCP QPS is ≈76% of brpc for 16B payloads but falls to ≈44% for 64KB, stemming from bthread coroutines, IOBuf zero-copy chains, and baidu_std multiplexing in brpc.
 
 ## Quick Start
 
@@ -194,11 +197,4 @@ First build downloads and compiles all deps (protobuf / curl / jsoncpp / flatbuf
 - No auth / encryption; no streaming RPC; Topic has no persistence
 - Unit tests cover core modules only; registry / circuit breaker / network layer untested
 
-## Code Stats
 
-| Item | Count |
-|---|---|
-| RPC framework LoC | 8,545 (`rpc/src/` only, excluding muduo and proto generated) |
-| Unit tests | 1,600+ lines, 12 files, 76 cases (GTest) |
-| Example code | 1,589 lines |
-| Source files | 56 (`rpc/src/` .h/.hpp/.cc/.cpp) |
