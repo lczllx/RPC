@@ -1,0 +1,3526 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="454" onload="init(evt)" viewBox="0 0 1200 454" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="454.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="437" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="437" > </text>
+<g id="frames">
+<g >
+<title>operator new (90,909,090 samples, 0.44%)</title><rect x="1181.4" y="277" width="5.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1184.42" y="287.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="713.3" y="261" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="716.31" y="271.5" ></text>
+</g>
+<g >
+<title>_int_malloc (373,737,370 samples, 1.79%)</title><rect x="120.4" y="181" width="21.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="123.45" y="191.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (20,202,020 samples, 0.10%)</title><rect x="969.7" y="229" width="1.1" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="972.68" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (30,303,030 samples, 0.15%)</title><rect x="872.4" y="149" width="1.7" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="875.40" y="159.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="299.6" y="261" width="0.5" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="302.56" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (121,212,120 samples, 0.58%)</title><rect x="1164.8" y="245" width="6.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="1167.82" y="255.5" ></text>
+</g>
+<g >
+<title>_int_free (30,303,030 samples, 0.15%)</title><rect x="934.8" y="165" width="1.7" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="937.77" y="175.5" ></text>
+</g>
+<g >
+<title>__x64_sys_epoll_wait (2,727,272,700 samples, 13.09%)</title><rect x="473.5" y="245" width="154.5" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="476.53" y="255.5" >__x64_sys_epoll_wait</text>
+</g>
+<g >
+<title>Json::Value::Value (20,202,020 samples, 0.10%)</title><rect x="350.5" y="197" width="1.1" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="353.49" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator[] (10,101,010 samples, 0.05%)</title><rect x="344.2" y="213" width="0.6" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="347.20" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (575,757,570 samples, 2.76%)</title><rect x="266.9" y="261" width="32.7" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="269.94" y="271.5" >Js..</text>
+</g>
+<g >
+<title>__GI___libc_free (30,303,030 samples, 0.15%)</title><rect x="764.2" y="245" width="1.8" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="767.24" y="255.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (20,202,020 samples, 0.10%)</title><rect x="825.5" y="197" width="1.1" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="828.47" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (20,202,020 samples, 0.10%)</title><rect x="38.0" y="213" width="1.2" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="41.04" y="223.5" ></text>
+</g>
+<g >
+<title>__fdget_pos (10,101,010 samples, 0.05%)</title><rect x="987.4" y="181" width="0.6" height="15.0" fill="rgb(216,55,13)" rx="2" ry="2" />
+<text  x="990.42" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="971.4" y="229" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="974.40" y="239.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (10,101,010 samples, 0.05%)</title><rect x="1159.7" y="261" width="0.5" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="1162.67" y="271.5" ></text>
+</g>
+<g >
+<title>operator new (20,202,020 samples, 0.10%)</title><rect x="1154.5" y="245" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1157.52" y="255.5" ></text>
+</g>
+<g >
+<title>_int_malloc (191,919,190 samples, 0.92%)</title><rect x="163.9" y="181" width="10.9" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="166.94" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="382.0" y="197" width="0.5" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="384.97" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator[] (30,303,030 samples, 0.15%)</title><rect x="387.7" y="293" width="1.7" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="390.69" y="303.5" ></text>
+</g>
+<g >
+<title>__put_user_nocheck_8 (10,101,010 samples, 0.05%)</title><rect x="492.4" y="197" width="0.6" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="495.42" y="207.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="965.1" y="181" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="968.10" y="191.5" ></text>
+</g>
+<g >
+<title>schedule (888,888,880 samples, 4.27%)</title><rect x="568.0" y="165" width="50.3" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="570.95" y="175.5" >sched..</text>
+</g>
+<g >
+<title>Json::Value::isUInt (10,101,010 samples, 0.05%)</title><rect x="210.9" y="245" width="0.5" height="15.0" fill="rgb(226,98,23)" rx="2" ry="2" />
+<text  x="213.86" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="343.6" y="165" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="346.63" y="175.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (515,151,510 samples, 2.47%)</title><rect x="266.9" y="245" width="29.2" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="269.94" y="255.5" >[l..</text>
+</g>
+<g >
+<title>std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;lcz_rpc::ShmServerZc::start (20,767,676,560 samples, 99.71%)</title><rect x="10.0" y="325" width="1176.6" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="13.00" y="335.5" >std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;lcz_rpc::ShmServerZc::start</text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (70,707,070 samples, 0.34%)</title><rect x="645.8" y="245" width="4.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="648.78" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::asInt (101,010,100 samples, 0.48%)</title><rect x="705.3" y="277" width="5.7" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="708.30" y="287.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (10,101,010 samples, 0.05%)</title><rect x="977.7" y="245" width="0.6" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="980.69" y="255.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (40,404,040 samples, 0.19%)</title><rect x="826.6" y="197" width="2.3" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="829.61" y="207.5" ></text>
+</g>
+<g >
+<title>heap_for_ptr (20,202,020 samples, 0.10%)</title><rect x="295.0" y="181" width="1.1" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="297.99" y="191.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (40,404,040 samples, 0.19%)</title><rect x="238.3" y="197" width="2.3" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="241.33" y="207.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (10,101,010 samples, 0.05%)</title><rect x="1176.3" y="261" width="0.5" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="1179.27" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (40,404,040 samples, 0.19%)</title><rect x="417.4" y="245" width="2.3" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="420.45" y="255.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="679.5" y="245" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="682.54" y="255.5" ></text>
+</g>
+<g >
+<title>_int_free (40,404,040 samples, 0.19%)</title><rect x="888.4" y="181" width="2.3" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="891.42" y="191.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="836.3" y="165" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="839.34" y="175.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::getNextChar (10,101,010 samples, 0.05%)</title><rect x="319.0" y="197" width="0.6" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="322.02" y="207.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (232,323,230 samples, 1.12%)</title><rect x="440.3" y="261" width="13.2" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="443.34" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="973.7" y="229" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="976.69" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (40,404,040 samples, 0.19%)</title><rect x="842.6" y="181" width="2.3" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="845.64" y="191.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="1165.4" y="213" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="1168.39" y="223.5" ></text>
+</g>
+<g >
+<title>__fdget_pos (141,414,140 samples, 0.68%)</title><rect x="988.6" y="165" width="8.0" height="15.0" fill="rgb(216,55,13)" rx="2" ry="2" />
+<text  x="991.56" y="175.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="357.9" y="181" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="360.93" y="191.5" ></text>
+</g>
+<g >
+<title>__lock_text_start (313,131,310 samples, 1.50%)</title><rect x="550.2" y="149" width="17.8" height="15.0" fill="rgb(232,125,30)" rx="2" ry="2" />
+<text  x="553.21" y="159.5" ></text>
+</g>
+<g >
+<title>checked_request2size (20,202,020 samples, 0.10%)</title><rect x="174.8" y="181" width="1.2" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="177.81" y="191.5" ></text>
+</g>
+<g >
+<title>heap_max_size (10,101,010 samples, 0.05%)</title><rect x="295.6" y="165" width="0.5" height="15.0" fill="rgb(244,179,43)" rx="2" ry="2" />
+<text  x="298.56" y="175.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="971.4" y="213" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="974.40" y="223.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (20,202,020 samples, 0.10%)</title><rect x="713.9" y="245" width="1.1" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="716.88" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (40,404,040 samples, 0.19%)</title><rect x="1176.8" y="277" width="2.3" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1179.84" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (90,909,090 samples, 0.44%)</title><rect x="842.1" y="197" width="5.1" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="845.07" y="207.5" ></text>
+</g>
+<g >
+<title>schedule_hrtimeout_range (1,595,959,580 samples, 7.66%)</title><rect x="527.9" y="197" width="90.4" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="530.90" y="207.5" >schedule_h..</text>
+</g>
+<g >
+<title>rw_verify_area (10,101,010 samples, 0.05%)</title><rect x="998.3" y="165" width="0.6" height="15.0" fill="rgb(218,64,15)" rx="2" ry="2" />
+<text  x="1001.29" y="175.5" ></text>
+</g>
+<g >
+<title>lcz::Logger::Debug (10,101,010 samples, 0.05%)</title><rect x="1188.3" y="357" width="0.6" height="15.0" fill="rgb(215,50,12)" rx="2" ry="2" />
+<text  x="1191.28" y="367.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmServerZc::workerLoop (10,101,010 samples, 0.05%)</title><rect x="1188.9" y="373" width="0.5" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="1191.86" y="383.5" ></text>
+</g>
+<g >
+<title>Json::Value::isInt (60,606,060 samples, 0.29%)</title><rect x="707.6" y="261" width="3.4" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="710.58" y="271.5" ></text>
+</g>
+<g >
+<title>arena_for_chunk (20,202,020 samples, 0.10%)</title><rect x="295.0" y="197" width="1.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="297.99" y="207.5" ></text>
+</g>
+<g >
+<title>std::locale::id::_M_id (10,101,010 samples, 0.05%)</title><rect x="961.1" y="197" width="0.6" height="15.0" fill="rgb(222,82,19)" rx="2" ry="2" />
+<text  x="964.10" y="207.5" ></text>
+</g>
+<g >
+<title>ep_item_poll.isra.0 (232,323,230 samples, 1.12%)</title><rect x="502.7" y="181" width="13.2" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="505.72" y="191.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="434.6" y="245" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="437.62" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::~CZString (20,202,020 samples, 0.10%)</title><rect x="840.9" y="197" width="1.2" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="843.92" y="207.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmChannel::write_to (30,303,030 samples, 0.15%)</title><rect x="1187.1" y="373" width="1.8" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="1190.14" y="383.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (60,606,060 samples, 0.29%)</title><rect x="724.2" y="261" width="3.4" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="727.18" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="738.5" y="229" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="741.49" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (10,101,010 samples, 0.05%)</title><rect x="341.9" y="197" width="0.6" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="344.91" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (20,202,020 samples, 0.10%)</title><rect x="364.8" y="245" width="1.1" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="367.80" y="255.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (40,404,040 samples, 0.19%)</title><rect x="44.9" y="229" width="2.3" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="47.91" y="239.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="1150.5" y="213" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="1153.51" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (40,404,040 samples, 0.19%)</title><rect x="420.3" y="245" width="2.3" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="423.31" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (20,202,020 samples, 0.10%)</title><rect x="275.5" y="197" width="1.2" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="278.53" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::resolveReference (292,929,290 samples, 1.41%)</title><rect x="344.8" y="213" width="16.6" height="15.0" fill="rgb(232,124,29)" rx="2" ry="2" />
+<text  x="347.77" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (121,212,120 samples, 0.58%)</title><rect x="66.1" y="213" width="6.8" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="69.08" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (10,101,010 samples, 0.05%)</title><rect x="406.0" y="277" width="0.6" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="409.00" y="287.5" ></text>
+</g>
+<g >
+<title>std::basic_streambuf&lt;char, std::char_traits&lt;char&gt; &gt;::xsputn (121,212,120 samples, 0.58%)</title><rect x="797.4" y="197" width="6.9" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="800.43" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (40,404,040 samples, 0.19%)</title><rect x="98.1" y="197" width="2.3" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="101.13" y="207.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (30,303,030 samples, 0.15%)</title><rect x="154.8" y="181" width="1.7" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="157.78" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (80,808,080 samples, 0.39%)</title><rect x="728.8" y="261" width="4.5" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="731.76" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator[] (90,909,090 samples, 0.44%)</title><rect x="973.1" y="261" width="5.2" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="976.11" y="271.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (343,434,340 samples, 1.65%)</title><rect x="276.7" y="229" width="19.4" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="279.67" y="239.5" ></text>
+</g>
+<g >
+<title>tcache_put (10,101,010 samples, 0.05%)</title><rect x="890.1" y="165" width="0.6" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="893.14" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (202,020,200 samples, 0.97%)</title><rect x="754.5" y="261" width="11.5" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="757.51" y="271.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::compare (30,303,030 samples, 0.15%)</title><rect x="1175.1" y="277" width="1.7" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="1178.12" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (90,909,090 samples, 0.44%)</title><rect x="352.2" y="181" width="5.2" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="355.21" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (151,515,150 samples, 0.73%)</title><rect x="427.7" y="293" width="8.6" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="430.75" y="303.5" ></text>
+</g>
+<g >
+<title>sysvec_apic_timer_interrupt (10,101,010 samples, 0.05%)</title><rect x="617.7" y="101" width="0.6" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="620.74" y="111.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (272,727,270 samples, 1.31%)</title><rect x="926.8" y="213" width="15.4" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="929.76" y="223.5" ></text>
+</g>
+<g >
+<title>exit_to_user_mode_loop (141,414,140 samples, 0.68%)</title><rect x="632.6" y="213" width="8.0" height="15.0" fill="rgb(224,90,21)" rx="2" ry="2" />
+<text  x="635.62" y="223.5" ></text>
+</g>
+<g >
+<title>operator new (20,202,020 samples, 0.10%)</title><rect x="1129.3" y="245" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1132.34" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="1160.2" y="261" width="0.6" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1163.24" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator== (10,101,010 samples, 0.05%)</title><rect x="840.3" y="197" width="0.6" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="843.35" y="207.5" ></text>
+</g>
+<g >
+<title>_int_free (30,303,030 samples, 0.15%)</title><rect x="648.1" y="213" width="1.7" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="651.07" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (40,404,040 samples, 0.19%)</title><rect x="331.6" y="149" width="2.3" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="334.61" y="159.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (20,202,020 samples, 0.10%)</title><rect x="720.2" y="261" width="1.1" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="723.17" y="271.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (60,606,060 samples, 0.29%)</title><rect x="296.1" y="245" width="3.5" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="299.13" y="255.5" ></text>
+</g>
+<g >
+<title>rcu_all_qs (20,202,020 samples, 0.10%)</title><rect x="526.8" y="165" width="1.1" height="15.0" fill="rgb(209,21,5)" rx="2" ry="2" />
+<text  x="529.75" y="175.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (10,101,010 samples, 0.05%)</title><rect x="400.3" y="261" width="0.6" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="403.28" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::nullSingleton (10,101,010 samples, 0.05%)</title><rect x="405.4" y="277" width="0.6" height="15.0" fill="rgb(248,202,48)" rx="2" ry="2" />
+<text  x="408.43" y="287.5" ></text>
+</g>
+<g >
+<title>operator new (111,111,110 samples, 0.53%)</title><rect x="879.8" y="181" width="6.3" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="882.84" y="191.5" ></text>
+</g>
+<g >
+<title>tcache_get (50,505,050 samples, 0.24%)</title><rect x="70.1" y="197" width="2.8" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="73.09" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (30,303,030 samples, 0.15%)</title><rect x="415.2" y="245" width="1.7" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="418.16" y="255.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::readToken (191,919,190 samples, 0.92%)</title><rect x="315.6" y="213" width="10.9" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="318.59" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (30,303,030 samples, 0.15%)</title><rect x="369.4" y="277" width="1.7" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="372.38" y="287.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (151,515,150 samples, 0.73%)</title><rect x="859.8" y="165" width="8.6" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="862.81" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="751.6" y="213" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="754.65" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (101,010,100 samples, 0.48%)</title><rect x="39.2" y="245" width="5.7" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="42.19" y="255.5" ></text>
+</g>
+<g >
+<title>hrtimer_init_sleeper (10,101,010 samples, 0.05%)</title><rect x="528.5" y="181" width="0.5" height="15.0" fill="rgb(232,128,30)" rx="2" ry="2" />
+<text  x="531.47" y="191.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (2,484,848,460 samples, 11.93%)</title><rect x="985.7" y="213" width="140.8" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="988.70" y="223.5" >do_syscall_64</text>
+</g>
+<g >
+<title>fput_many (10,101,010 samples, 0.05%)</title><rect x="446.1" y="197" width="0.5" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="449.06" y="207.5" ></text>
+</g>
+<g >
+<title>operator new (30,303,030 samples, 0.15%)</title><rect x="261.8" y="261" width="1.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="264.79" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::~CZString (10,101,010 samples, 0.05%)</title><rect x="272.1" y="229" width="0.6" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="275.10" y="239.5" ></text>
+</g>
+<g >
+<title>run_rebalance_domains (10,101,010 samples, 0.05%)</title><rect x="617.7" y="53" width="0.6" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="620.74" y="63.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (282,828,280 samples, 1.36%)</title><rect x="408.3" y="277" width="16.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="411.29" y="287.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="414.0" y="245" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="417.02" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (10,101,010 samples, 0.05%)</title><rect x="715.0" y="261" width="0.6" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="718.02" y="271.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (212,121,210 samples, 1.02%)</title><rect x="905.0" y="197" width="12.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="908.01" y="207.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::decodeNumber (232,323,230 samples, 1.12%)</title><rect x="327.6" y="197" width="13.2" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="330.60" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="340.2" y="149" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="343.19" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (222,222,220 samples, 1.07%)</title><rect x="739.1" y="245" width="12.5" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="742.06" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (90,909,090 samples, 0.44%)</title><rect x="176.0" y="181" width="5.1" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="178.96" y="191.5" ></text>
+</g>
+<g >
+<title>syscall_exit_to_user_mode (20,202,020 samples, 0.10%)</title><rect x="1126.5" y="213" width="1.1" height="15.0" fill="rgb(251,211,50)" rx="2" ry="2" />
+<text  x="1129.48" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (10,101,010 samples, 0.05%)</title><rect x="361.4" y="213" width="0.5" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="364.37" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (10,101,010 samples, 0.05%)</title><rect x="357.4" y="165" width="0.5" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="360.36" y="175.5" ></text>
+</g>
+<g >
+<title>std::use_facet&lt;std::ctype&lt;char&gt; &gt; (50,505,050 samples, 0.24%)</title><rect x="956.5" y="213" width="2.9" height="15.0" fill="rgb(242,174,41)" rx="2" ry="2" />
+<text  x="959.52" y="223.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::decodeNumber (90,909,090 samples, 0.44%)</title><rect x="330.5" y="181" width="5.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="333.47" y="191.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::skipCommentTokens (20,202,020 samples, 0.10%)</title><rect x="340.8" y="197" width="1.1" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="343.77" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (10,101,010 samples, 0.05%)</title><rect x="387.1" y="277" width="0.6" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="390.12" y="287.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="917.0" y="213" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="920.03" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::~CZString (10,101,010 samples, 0.05%)</title><rect x="728.2" y="261" width="0.6" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="731.19" y="271.5" ></text>
+</g>
+<g >
+<title>tcache_get (30,303,030 samples, 0.15%)</title><rect x="1177.4" y="261" width="1.7" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="1180.41" y="271.5" ></text>
+</g>
+<g >
+<title>arena_for_chunk (20,202,020 samples, 0.10%)</title><rect x="763.1" y="197" width="1.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="766.09" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (101,010,100 samples, 0.48%)</title><rect x="758.5" y="245" width="5.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="761.52" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (20,202,020 samples, 0.10%)</title><rect x="196.6" y="229" width="1.1" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="199.56" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (121,212,120 samples, 0.58%)</title><rect x="32.3" y="245" width="6.9" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="35.32" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (30,303,030 samples, 0.15%)</title><rect x="851.2" y="181" width="1.7" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="854.22" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (20,202,020 samples, 0.10%)</title><rect x="403.7" y="261" width="1.2" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="406.71" y="271.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (20,202,020 samples, 0.10%)</title><rect x="1155.7" y="245" width="1.1" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1158.66" y="255.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="902.2" y="197" width="0.5" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="905.15" y="207.5" ></text>
+</g>
+<g >
+<title>rseq_ip_fixup (30,303,030 samples, 0.15%)</title><rect x="1123.6" y="133" width="1.7" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="1126.62" y="143.5" ></text>
+</g>
+<g >
+<title>std::__ostream_insert&lt;char, std::char_traits&lt;char&gt; &gt; (20,202,020 samples, 0.10%)</title><rect x="804.9" y="229" width="1.1" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="807.87" y="239.5" ></text>
+</g>
+<g >
+<title>_int_free (20,202,020 samples, 0.10%)</title><rect x="646.9" y="197" width="1.2" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="649.93" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="942.2" y="245" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="945.21" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (50,505,050 samples, 0.24%)</title><rect x="202.3" y="213" width="2.8" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="205.28" y="223.5" ></text>
+</g>
+<g >
+<title>tcache_get (20,202,020 samples, 0.10%)</title><rect x="378.0" y="245" width="1.1" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="380.96" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (30,303,030 samples, 0.15%)</title><rect x="845.5" y="149" width="1.7" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="848.50" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (50,505,050 samples, 0.24%)</title><rect x="850.1" y="197" width="2.8" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="853.08" y="207.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::parse (1,101,010,090 samples, 5.29%)</title><rect x="303.6" y="261" width="62.3" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="306.57" y="271.5" >Json::..</text>
+</g>
+<g >
+<title>tcache_put (10,101,010 samples, 0.05%)</title><rect x="193.1" y="197" width="0.6" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="196.12" y="207.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (10,101,010 samples, 0.05%)</title><rect x="1153.4" y="213" width="0.5" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="1156.38" y="223.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="979.4" y="245" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="982.41" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (20,202,020 samples, 0.10%)</title><rect x="869.0" y="181" width="1.1" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="871.96" y="191.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (40,404,040 samples, 0.19%)</title><rect x="671.5" y="261" width="2.3" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="674.53" y="271.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (20,202,020 samples, 0.10%)</title><rect x="695.0" y="213" width="1.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="698.00" y="223.5" ></text>
+</g>
+<g >
+<title>aa_file_perm (10,101,010 samples, 0.05%)</title><rect x="1117.9" y="101" width="0.6" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="1120.90" y="111.5" ></text>
+</g>
+<g >
+<title>lll_mutex_lock_optimized (30,303,030 samples, 0.15%)</title><rect x="455.8" y="277" width="1.7" height="15.0" fill="rgb(209,22,5)" rx="2" ry="2" />
+<text  x="458.79" y="287.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="147.9" y="165" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="150.91" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (60,606,060 samples, 0.29%)</title><rect x="273.2" y="213" width="3.5" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="276.24" y="223.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="644.1" y="197" width="0.5" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="647.06" y="207.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="383.1" y="229" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="386.11" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (10,101,010 samples, 0.05%)</title><rect x="697.9" y="213" width="0.5" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="700.86" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="644.6" y="229" width="1.2" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="647.64" y="239.5" ></text>
+</g>
+<g >
+<title>ep_poll (10,101,010 samples, 0.05%)</title><rect x="625.2" y="229" width="0.6" height="15.0" fill="rgb(238,151,36)" rx="2" ry="2" />
+<text  x="628.18" y="239.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (50,505,050 samples, 0.24%)</title><rect x="199.4" y="245" width="2.9" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="202.42" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (20,202,020 samples, 0.10%)</title><rect x="335.6" y="181" width="1.2" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="338.62" y="191.5" ></text>
+</g>
+<g >
+<title>mem_cgroup_handle_over_high (10,101,010 samples, 0.05%)</title><rect x="640.1" y="197" width="0.5" height="15.0" fill="rgb(249,205,49)" rx="2" ry="2" />
+<text  x="643.06" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (101,010,100 samples, 0.48%)</title><rect x="936.5" y="197" width="5.7" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="939.49" y="207.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="382.0" y="181" width="0.5" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="384.97" y="191.5" ></text>
+</g>
+<g >
+<title>start_thread (20,767,676,560 samples, 99.71%)</title><rect x="10.0" y="357" width="1176.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="13.00" y="367.5" >start_thread</text>
+</g>
+<g >
+<title>arena_for_chunk (20,202,020 samples, 0.10%)</title><rect x="763.1" y="213" width="1.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="766.09" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::resolveReference (1,090,909,080 samples, 5.24%)</title><rect x="828.9" y="213" width="61.8" height="15.0" fill="rgb(232,124,29)" rx="2" ry="2" />
+<text  x="831.90" y="223.5" >Json::..</text>
+</g>
+<g >
+<title>fput_many (30,303,030 samples, 0.15%)</title><rect x="996.6" y="165" width="1.7" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="999.58" y="175.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="932.5" y="181" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="935.48" y="191.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="1163.7" y="245" width="0.5" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1166.68" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (30,303,030 samples, 0.15%)</title><rect x="642.3" y="197" width="1.8" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="645.35" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (40,404,040 samples, 0.19%)</title><rect x="417.4" y="261" width="2.3" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="420.45" y="271.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (10,101,010 samples, 0.05%)</title><rect x="679.0" y="245" width="0.5" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="681.97" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (40,404,040 samples, 0.19%)</title><rect x="341.9" y="213" width="2.3" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="344.91" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (10,101,010 samples, 0.05%)</title><rect x="751.6" y="229" width="0.6" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="754.65" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="644.1" y="213" width="0.5" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="647.06" y="223.5" ></text>
+</g>
+<g >
+<title>Json::StreamWriterBuilder::~StreamWriterBuilder (272,727,270 samples, 1.31%)</title><rect x="926.8" y="245" width="15.4" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="929.76" y="255.5" ></text>
+</g>
+<g >
+<title>___pthread_mutex_lock (70,707,070 samples, 0.34%)</title><rect x="453.5" y="293" width="4.0" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="456.50" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (272,727,270 samples, 1.31%)</title><rect x="926.8" y="229" width="15.4" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="929.76" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (10,101,010 samples, 0.05%)</title><rect x="844.9" y="181" width="0.6" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="847.93" y="191.5" ></text>
+</g>
+<g >
+<title>__put_user_nocheck_4 (10,101,010 samples, 0.05%)</title><rect x="491.8" y="197" width="0.6" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="494.84" y="207.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (20,202,020 samples, 0.10%)</title><rect x="925.6" y="213" width="1.2" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="928.62" y="223.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="977.1" y="245" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="980.12" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (30,303,030 samples, 0.15%)</title><rect x="703.6" y="261" width="1.7" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="706.58" y="271.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="79.8" y="213" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="82.82" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (272,727,270 samples, 1.31%)</title><rect x="853.5" y="181" width="15.5" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="856.51" y="191.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (60,606,060 samples, 0.29%)</title><rect x="675.0" y="245" width="3.4" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="677.97" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (151,515,150 samples, 0.73%)</title><rect x="186.3" y="229" width="8.5" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="189.26" y="239.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::reserve (20,202,020 samples, 0.10%)</title><rect x="314.4" y="197" width="1.2" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="317.44" y="207.5" ></text>
+</g>
+<g >
+<title>_int_free (50,505,050 samples, 0.24%)</title><rect x="366.5" y="245" width="2.9" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="369.52" y="255.5" ></text>
+</g>
+<g >
+<title>operator delete[] (10,101,010 samples, 0.05%)</title><rect x="1156.8" y="261" width="0.6" height="15.0" fill="rgb(208,18,4)" rx="2" ry="2" />
+<text  x="1159.81" y="271.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (838,383,830 samples, 4.03%)</title><rect x="570.8" y="133" width="47.5" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="573.81" y="143.5" >fini..</text>
+</g>
+<g >
+<title>Json::Value::Comments::Comments (10,101,010 samples, 0.05%)</title><rect x="40.9" y="213" width="0.6" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="43.90" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (30,303,030 samples, 0.15%)</title><rect x="406.6" y="261" width="1.7" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="409.58" y="271.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="154.2" y="181" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="157.21" y="191.5" ></text>
+</g>
+<g >
+<title>__schedule (10,101,010 samples, 0.05%)</title><rect x="534.8" y="165" width="0.5" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="537.76" y="175.5" ></text>
+</g>
+<g >
+<title>do_epoll_wait (2,666,666,640 samples, 12.80%)</title><rect x="474.1" y="229" width="151.1" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="477.10" y="239.5" >do_epoll_wait</text>
+</g>
+<g >
+<title>Json::OurReader::readToken (30,303,030 samples, 0.15%)</title><rect x="362.5" y="213" width="1.7" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="365.51" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (70,707,070 samples, 0.34%)</title><rect x="1167.1" y="213" width="4.0" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="1170.11" y="223.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_construct&lt;char const*&gt; (20,202,020 samples, 0.10%)</title><rect x="1171.7" y="277" width="1.1" height="15.0" fill="rgb(214,43,10)" rx="2" ry="2" />
+<text  x="1174.69" y="287.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_construct&lt;char*&gt; (40,404,040 samples, 0.19%)</title><rect x="1172.8" y="277" width="2.3" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="1175.83" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (50,505,050 samples, 0.24%)</title><rect x="847.2" y="181" width="2.9" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="850.22" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator[] (40,404,040 samples, 0.19%)</title><rect x="44.9" y="245" width="2.3" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="47.91" y="255.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::getNextChar (10,101,010 samples, 0.05%)</title><rect x="323.0" y="181" width="0.6" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="326.03" y="191.5" ></text>
+</g>
+<g >
+<title>__x64_sys_write (2,323,232,300 samples, 11.15%)</title><rect x="986.8" y="197" width="131.7" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="989.85" y="207.5" >__x64_sys_write</text>
+</g>
+<g >
+<title>Json::Value::dupPayload (20,202,020 samples, 0.10%)</title><rect x="148.5" y="197" width="1.1" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="151.49" y="207.5" ></text>
+</g>
+<g >
+<title>std::locale::id::_M_id (10,101,010 samples, 0.05%)</title><rect x="962.2" y="197" width="0.6" height="15.0" fill="rgb(222,82,19)" rx="2" ry="2" />
+<text  x="965.24" y="207.5" ></text>
+</g>
+<g >
+<title>ktime_get_ts64 (10,101,010 samples, 0.05%)</title><rect x="628.6" y="245" width="0.6" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="631.61" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_write (2,606,060,580 samples, 12.51%)</title><rect x="980.0" y="245" width="147.6" height="15.0" fill="rgb(217,57,13)" rx="2" ry="2" />
+<text  x="982.98" y="255.5" >__GI___libc_write</text>
+</g>
+<g >
+<title>Json::OurReader::skipSpaces (10,101,010 samples, 0.05%)</title><rect x="363.7" y="197" width="0.5" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="366.66" y="207.5" ></text>
+</g>
+<g >
+<title>std::basic_ios&lt;char, std::char_traits&lt;char&gt; &gt;::_M_cache_locale (262,626,260 samples, 1.26%)</title><rect x="947.9" y="229" width="14.9" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="950.93" y="239.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="1171.1" y="213" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1174.12" y="223.5" ></text>
+</g>
+<g >
+<title>schedule_hrtimeout_range_clock (1,575,757,560 samples, 7.57%)</title><rect x="529.0" y="181" width="89.3" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="532.04" y="191.5" >schedule_h..</text>
+</g>
+<g >
+<title>__GI___libc_write (2,606,060,580 samples, 12.51%)</title><rect x="980.0" y="261" width="147.6" height="15.0" fill="rgb(217,57,13)" rx="2" ry="2" />
+<text  x="982.98" y="271.5" >__GI___libc_write</text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (1,222,222,210 samples, 5.87%)</title><rect x="300.1" y="277" width="69.3" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="303.14" y="287.5" >[libjso..</text>
+</g>
+<g >
+<title>Json::Value::find (717,171,710 samples, 3.44%)</title><rect x="216.0" y="245" width="40.6" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="219.01" y="255.5" >Jso..</text>
+</g>
+<g >
+<title>Json::Value::operator[] (80,808,080 samples, 0.39%)</title><rect x="824.3" y="213" width="4.6" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="827.33" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (20,202,020 samples, 0.10%)</title><rect x="222.9" y="229" width="1.1" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="225.88" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="710.4" y="245" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="713.45" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (40,404,040 samples, 0.19%)</title><rect x="200.0" y="213" width="2.3" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="202.99" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (101,010,100 samples, 0.48%)</title><rect x="870.1" y="181" width="5.7" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="873.11" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="375.7" y="261" width="0.5" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="378.67" y="271.5" ></text>
+</g>
+<g >
+<title>__get_user_8 (60,606,060 samples, 0.29%)</title><rect x="636.1" y="165" width="3.4" height="15.0" fill="rgb(242,171,41)" rx="2" ry="2" />
+<text  x="639.05" y="175.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="646.9" y="213" width="1.2" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="649.93" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="197.1" y="213" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="200.13" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::nullSingleton (10,101,010 samples, 0.05%)</title><rect x="101.6" y="229" width="0.5" height="15.0" fill="rgb(248,202,48)" rx="2" ry="2" />
+<text  x="104.56" y="239.5" ></text>
+</g>
+<g >
+<title>rseq_ip_fixup (70,707,070 samples, 0.34%)</title><rect x="636.1" y="181" width="4.0" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="639.05" y="191.5" ></text>
+</g>
+<g >
+<title>syscall_exit_to_user_mode (70,707,070 samples, 0.34%)</title><rect x="1122.5" y="197" width="4.0" height="15.0" fill="rgb(251,211,50)" rx="2" ry="2" />
+<text  x="1125.47" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___pthread_enable_asynccancel (10,101,010 samples, 0.05%)</title><rect x="471.8" y="277" width="0.6" height="15.0" fill="rgb(240,165,39)" rx="2" ry="2" />
+<text  x="474.81" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="899.9" y="213" width="0.5" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="902.86" y="223.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="701.3" y="197" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="704.29" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="814.0" y="197" width="0.6" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="817.03" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (10,101,010 samples, 0.05%)</title><rect x="731.6" y="245" width="0.6" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="734.62" y="255.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="901.0" y="213" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="904.01" y="223.5" ></text>
+</g>
+<g >
+<title>__fget_files (30,303,030 samples, 0.15%)</title><rect x="474.1" y="181" width="1.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="477.10" y="191.5" ></text>
+</g>
+<g >
+<title>eventfd_read (50,505,050 samples, 0.24%)</title><rect x="449.5" y="165" width="2.9" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="452.50" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="341.9" y="181" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="344.91" y="191.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (161,616,160 samples, 0.78%)</title><rect x="351.6" y="197" width="9.2" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="354.64" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (191,919,190 samples, 0.92%)</title><rect x="641.2" y="277" width="10.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="644.20" y="287.5" ></text>
+</g>
+<g >
+<title>__dynamic_cast (30,303,030 samples, 0.15%)</title><rect x="768.8" y="277" width="1.7" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="771.82" y="287.5" ></text>
+</g>
+<g >
+<title>syscall_enter_from_user_mode (70,707,070 samples, 0.34%)</title><rect x="1118.5" y="197" width="4.0" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="1121.47" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="704.7" y="245" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="707.72" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___pthread_disable_asynccancel (10,101,010 samples, 0.05%)</title><rect x="471.2" y="277" width="0.6" height="15.0" fill="rgb(236,146,34)" rx="2" ry="2" />
+<text  x="474.24" y="287.5" ></text>
+</g>
+<g >
+<title>shm_benchmark_s (20,828,282,620 samples, 100.00%)</title><rect x="10.0" y="389" width="1180.0" height="15.0" fill="rgb(208,16,3)" rx="2" ry="2" />
+<text  x="13.00" y="399.5" >shm_benchmark_s</text>
+</g>
+<g >
+<title>__fget_light (50,505,050 samples, 0.24%)</title><rect x="442.6" y="181" width="2.9" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="445.63" y="191.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="349.9" y="165" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="352.92" y="175.5" ></text>
+</g>
+<g >
+<title>JSON::serialize (3,363,636,330 samples, 16.15%)</title><rect x="780.8" y="261" width="190.6" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="783.83" y="271.5" >JSON::serialize</text>
+</g>
+<g >
+<title>Json::Value::dupPayload (10,101,010 samples, 0.05%)</title><rect x="416.9" y="245" width="0.5" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="419.88" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (151,515,150 samples, 0.73%)</title><rect x="379.1" y="293" width="8.6" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="382.11" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator[] (888,888,880 samples, 4.27%)</title><rect x="211.4" y="261" width="50.4" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="214.44" y="271.5" >Json:..</text>
+</g>
+<g >
+<title>Json::OurReader::decodeString (60,606,060 samples, 0.29%)</title><rect x="312.2" y="213" width="3.4" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="315.15" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (40,404,040 samples, 0.19%)</title><rect x="733.9" y="245" width="2.3" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="736.91" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (30,303,030 samples, 0.15%)</title><rect x="701.9" y="229" width="1.7" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="704.86" y="239.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2,979,797,950 samples, 14.31%)</title><rect x="472.4" y="277" width="168.8" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="475.39" y="287.5" >entry_SYSCALL_64_afte..</text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (20,202,020 samples, 0.10%)</title><rect x="147.3" y="181" width="1.2" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="150.34" y="191.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (101,010,100 samples, 0.48%)</title><rect x="911.3" y="165" width="5.7" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="914.31" y="175.5" ></text>
+</g>
+<g >
+<title>_int_malloc (161,616,160 samples, 0.78%)</title><rect x="742.5" y="213" width="9.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="745.49" y="223.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (30,303,030 samples, 0.15%)</title><rect x="143.3" y="197" width="1.8" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="146.34" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (20,202,020 samples, 0.10%)</title><rect x="380.8" y="213" width="1.2" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="383.82" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (30,303,030 samples, 0.15%)</title><rect x="845.5" y="165" width="1.7" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="848.50" y="175.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (60,606,060 samples, 0.29%)</title><rect x="424.3" y="277" width="3.4" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="427.32" y="287.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="380.8" y="229" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="383.82" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="662.9" y="261" width="0.6" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="665.95" y="271.5" ></text>
+</g>
+<g >
+<title>vfs_write (2,111,111,090 samples, 10.14%)</title><rect x="998.9" y="165" width="119.6" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="1001.87" y="175.5" >vfs_write</text>
+</g>
+<g >
+<title>free_perturb (10,101,010 samples, 0.05%)</title><rect x="649.2" y="197" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="652.21" y="207.5" ></text>
+</g>
+<g >
+<title>std::ostream::sentry::sentry (10,101,010 samples, 0.05%)</title><rect x="804.3" y="197" width="0.6" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="807.30" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (70,707,070 samples, 0.34%)</title><rect x="875.8" y="181" width="4.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="878.83" y="191.5" ></text>
+</g>
+<g >
+<title>_int_free (30,303,030 samples, 0.15%)</title><rect x="650.4" y="229" width="1.7" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="653.36" y="239.5" ></text>
+</g>
+<g >
+<title>Json::CharReaderBuilder::setDefaults (2,929,292,900 samples, 14.06%)</title><rect x="31.7" y="261" width="166.0" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="34.75" y="271.5" >Json::CharReaderBuild..</text>
+</g>
+<g >
+<title>operator delete (10,101,010 samples, 0.05%)</title><rect x="1149.9" y="229" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1152.94" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (10,101,010 samples, 0.05%)</title><rect x="334.5" y="149" width="0.5" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="337.47" y="159.5" ></text>
+</g>
+<g >
+<title>_int_free (20,202,020 samples, 0.10%)</title><rect x="644.6" y="213" width="1.2" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="647.64" y="223.5" ></text>
+</g>
+<g >
+<title>Json::BuiltStyledStreamWriter::write (383,838,380 samples, 1.84%)</title><rect x="784.3" y="245" width="21.7" height="15.0" fill="rgb(240,162,38)" rx="2" ry="2" />
+<text  x="787.27" y="255.5" >J..</text>
+</g>
+<g >
+<title>__GI___libc_free (70,707,070 samples, 0.34%)</title><rect x="1137.4" y="229" width="4.0" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="1140.35" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (10,101,010 samples, 0.05%)</title><rect x="641.8" y="197" width="0.5" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="644.77" y="207.5" ></text>
+</g>
+<g >
+<title>tcache_put (10,101,010 samples, 0.05%)</title><rect x="751.1" y="197" width="0.5" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="754.08" y="207.5" ></text>
+</g>
+<g >
+<title>__fget_light (10,101,010 samples, 0.05%)</title><rect x="445.5" y="197" width="0.6" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="448.49" y="207.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="943.9" y="245" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="946.93" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="422.0" y="229" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="425.03" y="239.5" ></text>
+</g>
+<g >
+<title>operator new (50,505,050 samples, 0.24%)</title><rect x="202.3" y="245" width="2.8" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="205.28" y="255.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (141,414,140 samples, 0.68%)</title><rect x="693.9" y="245" width="8.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="696.85" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_put (10,101,010 samples, 0.05%)</title><rect x="432.9" y="213" width="0.6" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="435.90" y="223.5" ></text>
+</g>
+<g >
+<title>hrtimer_active (151,515,150 samples, 0.73%)</title><rect x="535.3" y="165" width="8.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="538.33" y="175.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (20,202,020 samples, 0.10%)</title><rect x="873.0" y="133" width="1.1" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="875.97" y="143.5" ></text>
+</g>
+<g >
+<title>Json::CharReaderBuilder::newCharReader (1,161,616,150 samples, 5.58%)</title><rect x="197.7" y="277" width="65.8" height="15.0" fill="rgb(218,64,15)" rx="2" ry="2" />
+<text  x="200.70" y="287.5" >Json::C..</text>
+</g>
+<g >
+<title>__GI___libc_free (60,606,060 samples, 0.29%)</title><rect x="887.3" y="197" width="3.4" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="890.27" y="207.5" ></text>
+</g>
+<g >
+<title>operator new (20,202,020 samples, 0.10%)</title><rect x="1150.5" y="229" width="1.2" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1153.51" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="931.3" y="165" width="1.2" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="934.34" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (20,202,020 samples, 0.10%)</title><rect x="700.1" y="197" width="1.2" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="703.15" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (40,404,040 samples, 0.19%)</title><rect x="142.8" y="213" width="2.3" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="145.76" y="223.5" ></text>
+</g>
+<g >
+<title>tcache_put (10,101,010 samples, 0.05%)</title><rect x="141.0" y="165" width="0.6" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="144.05" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="693.3" y="245" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="696.28" y="255.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmChannel::write_response (464,646,460 samples, 2.23%)</title><rect x="1130.5" y="261" width="26.3" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="1133.48" y="271.5" >l..</text>
+</g>
+<g >
+<title>Json::StreamWriter::StreamWriter (10,101,010 samples, 0.05%)</title><rect x="899.3" y="213" width="0.6" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="902.29" y="223.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::OurReader (111,111,110 samples, 0.53%)</title><rect x="198.8" y="261" width="6.3" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="201.85" y="271.5" ></text>
+</g>
+<g >
+<title>security_file_permission (20,202,020 samples, 0.10%)</title><rect x="1117.3" y="133" width="1.2" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="1120.32" y="143.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="893.0" y="181" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="896.00" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (111,111,110 samples, 0.53%)</title><rect x="408.3" y="261" width="6.3" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="411.29" y="271.5" ></text>
+</g>
+<g >
+<title>Json::OurFeatures::all (10,101,010 samples, 0.05%)</title><rect x="198.3" y="261" width="0.5" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="201.27" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::find (70,707,070 samples, 0.34%)</title><rect x="973.1" y="245" width="4.0" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="976.11" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (50,505,050 samples, 0.24%)</title><rect x="974.3" y="213" width="2.8" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="977.26" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (10,101,010 samples, 0.05%)</title><rect x="1188.9" y="357" width="0.5" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="1191.86" y="367.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (50,505,050 samples, 0.24%)</title><rect x="974.3" y="229" width="2.8" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="977.26" y="239.5" ></text>
+</g>
+<g >
+<title>operator new (40,404,040 samples, 0.19%)</title><rect x="1176.8" y="293" width="2.3" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1179.84" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (20,202,020 samples, 0.10%)</title><rect x="736.2" y="261" width="1.1" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="739.20" y="271.5" ></text>
+</g>
+<g >
+<title>Json::BuiltStyledStreamWriter::writeCommentAfterValueOnSameLine (30,303,030 samples, 0.15%)</title><rect x="786.0" y="229" width="1.7" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="788.98" y="239.5" ></text>
+</g>
+<g >
+<title>std::locale::id::_M_id (20,202,020 samples, 0.10%)</title><rect x="958.2" y="197" width="1.2" height="15.0" fill="rgb(222,82,19)" rx="2" ry="2" />
+<text  x="961.23" y="207.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="299.6" y="245" width="0.5" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="302.56" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (30,303,030 samples, 0.15%)</title><rect x="715.0" y="277" width="1.7" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="718.02" y="287.5" ></text>
+</g>
+<g >
+<title>irq_exit_rcu (10,101,010 samples, 0.05%)</title><rect x="617.7" y="85" width="0.6" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="620.74" y="95.5" ></text>
+</g>
+<g >
+<title>lcz::getrootLogger (70,707,070 samples, 0.34%)</title><rect x="664.1" y="261" width="4.0" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="667.09" y="271.5" ></text>
+</g>
+<g >
+<title>arena_for_chunk (10,101,010 samples, 0.05%)</title><rect x="194.3" y="197" width="0.5" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="197.27" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (30,303,030 samples, 0.15%)</title><rect x="1132.8" y="245" width="1.7" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="1135.77" y="255.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (10,101,010 samples, 0.05%)</title><rect x="925.0" y="213" width="0.6" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="928.04" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="404.9" y="245" width="0.5" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="407.86" y="255.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (10,101,010 samples, 0.05%)</title><rect x="727.6" y="245" width="0.6" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="730.61" y="255.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="431.8" y="261" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="434.76" y="271.5" ></text>
+</g>
+<g >
+<title>__clone3 (20,767,676,560 samples, 99.71%)</title><rect x="10.0" y="373" width="1176.6" height="15.0" fill="rgb(239,158,37)" rx="2" ry="2" />
+<text  x="13.00" y="383.5" >__clone3</text>
+</g>
+<g >
+<title>__GI___libc_malloc (20,202,020 samples, 0.10%)</title><rect x="349.4" y="181" width="1.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="352.35" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (60,606,060 samples, 0.29%)</title><rect x="933.1" y="181" width="3.4" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="936.06" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::~CZString (10,101,010 samples, 0.05%)</title><rect x="930.2" y="181" width="0.6" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="933.19" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (30,303,030 samples, 0.15%)</title><rect x="433.5" y="261" width="1.7" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="436.47" y="271.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (30,303,030 samples, 0.15%)</title><rect x="766.0" y="277" width="1.7" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="768.96" y="287.5" ></text>
+</g>
+<g >
+<title>operator new (30,303,030 samples, 0.15%)</title><rect x="358.5" y="181" width="1.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="361.51" y="191.5" ></text>
+</g>
+<g >
+<title>read_tsc (10,101,010 samples, 0.05%)</title><rect x="627.5" y="229" width="0.5" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="630.47" y="239.5" ></text>
+</g>
+<g >
+<title>Json::CharReaderBuilder::~CharReaderBuilder (50,505,050 samples, 0.24%)</title><rect x="263.5" y="277" width="2.9" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="266.51" y="287.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (50,505,050 samples, 0.24%)</title><rect x="380.3" y="245" width="2.8" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="383.25" y="255.5" ></text>
+</g>
+<g >
+<title>__schedule (20,202,020 samples, 0.10%)</title><rect x="1125.3" y="133" width="1.2" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="1128.33" y="143.5" ></text>
+</g>
+<g >
+<title>syscall_exit_to_user_mode (161,616,160 samples, 0.78%)</title><rect x="632.0" y="245" width="9.2" height="15.0" fill="rgb(251,211,50)" rx="2" ry="2" />
+<text  x="635.05" y="255.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_construct&lt;char*&gt; (10,101,010 samples, 0.05%)</title><rect x="1159.1" y="261" width="0.6" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="1162.10" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (20,202,020 samples, 0.10%)</title><rect x="96.4" y="197" width="1.2" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="99.41" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (20,202,020 samples, 0.10%)</title><rect x="757.4" y="245" width="1.1" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="760.37" y="255.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (20,767,676,560 samples, 99.71%)</title><rect x="10.0" y="341" width="1176.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="13.00" y="351.5" >[libstdc++.so.6.0.30]</text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="700.7" y="181" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="703.72" y="191.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmServerZc::workerLoop (20,767,676,560 samples, 99.71%)</title><rect x="10.0" y="309" width="1176.6" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="13.00" y="319.5" >lcz_rpc::ShmServerZc::workerLoop</text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="383.1" y="245" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="386.11" y="255.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="1172.3" y="261" width="0.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1175.26" y="271.5" ></text>
+</g>
+<g >
+<title>tcache_get (20,202,020 samples, 0.10%)</title><rect x="201.1" y="197" width="1.2" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="204.13" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (80,808,080 samples, 0.39%)</title><rect x="151.9" y="197" width="4.6" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="154.92" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (101,010,100 samples, 0.48%)</title><rect x="831.2" y="197" width="5.7" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="834.19" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (40,404,040 samples, 0.19%)</title><rect x="649.8" y="245" width="2.3" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="652.79" y="255.5" ></text>
+</g>
+<g >
+<title>__x64_sys_read (212,121,210 samples, 1.02%)</title><rect x="440.3" y="229" width="12.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="443.34" y="239.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (575,757,570 samples, 2.76%)</title><rect x="224.0" y="229" width="32.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="227.03" y="239.5" >[l..</text>
+</g>
+<g >
+<title>Json::Value::CZString::operator== (20,202,020 samples, 0.10%)</title><rect x="93.0" y="229" width="1.1" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="95.98" y="239.5" ></text>
+</g>
+<g >
+<title>ep_poll (2,535,353,510 samples, 12.17%)</title><rect x="476.4" y="213" width="143.6" height="15.0" fill="rgb(238,151,36)" rx="2" ry="2" />
+<text  x="479.39" y="223.5" >ep_poll</text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (30,303,030 samples, 0.15%)</title><rect x="698.4" y="213" width="1.7" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="701.43" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (20,202,020 samples, 0.10%)</title><rect x="332.8" y="133" width="1.1" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="335.75" y="143.5" ></text>
+</g>
+<g >
+<title>read_tsc (10,101,010 samples, 0.05%)</title><rect x="619.5" y="181" width="0.5" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="622.46" y="191.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (50,505,050 samples, 0.24%)</title><rect x="376.2" y="277" width="2.9" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="379.25" y="287.5" ></text>
+</g>
+<g >
+<title>_int_free (20,202,020 samples, 0.10%)</title><rect x="752.8" y="245" width="1.1" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="755.79" y="255.5" ></text>
+</g>
+<g >
+<title>arena_for_chunk (20,202,020 samples, 0.10%)</title><rect x="193.7" y="213" width="1.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="196.70" y="223.5" ></text>
+</g>
+<g >
+<title>__lock_text_start (80,808,080 samples, 0.39%)</title><rect x="545.1" y="149" width="4.5" height="15.0" fill="rgb(232,125,30)" rx="2" ry="2" />
+<text  x="548.06" y="159.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (40,404,040 samples, 0.19%)</title><rect x="376.8" y="261" width="2.3" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="379.82" y="271.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (30,303,030 samples, 0.15%)</title><rect x="725.9" y="245" width="1.7" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="728.90" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (30,303,030 samples, 0.15%)</title><rect x="874.1" y="149" width="1.7" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="877.11" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (343,434,340 samples, 1.65%)</title><rect x="73.5" y="229" width="19.5" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="76.52" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="360.8" y="197" width="0.6" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="363.80" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="869.5" y="165" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="872.53" y="175.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="718.5" y="213" width="0.5" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="721.46" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="756.8" y="245" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="759.80" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (171,717,170 samples, 0.82%)</title><rect x="806.0" y="213" width="9.7" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="809.01" y="223.5" ></text>
+</g>
+<g >
+<title>tcache_put (20,202,020 samples, 0.10%)</title><rect x="293.8" y="197" width="1.2" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="296.84" y="207.5" ></text>
+</g>
+<g >
+<title>vfs_read (101,010,100 samples, 0.48%)</title><rect x="446.6" y="197" width="5.8" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="449.63" y="207.5" ></text>
+</g>
+<g >
+<title>operator new (30,303,030 samples, 0.15%)</title><rect x="845.5" y="181" width="1.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="848.50" y="191.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="416.3" y="213" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="419.30" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (30,303,030 samples, 0.15%)</title><rect x="646.4" y="229" width="1.7" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="649.35" y="239.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="751.6" y="197" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="754.65" y="207.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (10,101,010 samples, 0.05%)</title><rect x="436.3" y="293" width="0.6" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="439.33" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (10,101,010 samples, 0.05%)</title><rect x="717.3" y="245" width="0.6" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="720.31" y="255.5" ></text>
+</g>
+<g >
+<title>JSON::deserialize (6,020,201,960 samples, 28.90%)</title><rect x="30.0" y="293" width="341.1" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="33.03" y="303.5" >JSON::deserialize</text>
+</g>
+<g >
+<title>Json::Value::releasePayload (10,101,010 samples, 0.05%)</title><rect x="361.4" y="197" width="0.5" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="364.37" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (30,303,030 samples, 0.15%)</title><rect x="874.1" y="165" width="1.7" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="877.11" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (30,303,030 samples, 0.15%)</title><rect x="729.9" y="245" width="1.7" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="732.90" y="255.5" ></text>
+</g>
+<g >
+<title>hrtimer_try_to_cancel.part.0 (323,232,320 samples, 1.55%)</title><rect x="549.6" y="165" width="18.4" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="552.64" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (10,101,010 samples, 0.05%)</title><rect x="641.8" y="181" width="0.5" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="644.77" y="191.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::compare (60,606,060 samples, 0.29%)</title><rect x="923.3" y="229" width="3.5" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="926.33" y="239.5" ></text>
+</g>
+<g >
+<title>operator new (50,505,050 samples, 0.24%)</title><rect x="199.4" y="229" width="2.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="202.42" y="239.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="768.2" y="261" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="771.24" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (50,505,050 samples, 0.24%)</title><rect x="414.6" y="261" width="2.8" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="417.59" y="271.5" ></text>
+</g>
+<g >
+<title>std::locale::locale (30,303,030 samples, 0.15%)</title><rect x="964.0" y="213" width="1.7" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="966.96" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (60,606,060 samples, 0.29%)</title><rect x="330.5" y="165" width="3.4" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="333.47" y="175.5" ></text>
+</g>
+<g >
+<title>std::ios_base::ios_base (10,101,010 samples, 0.05%)</title><rect x="968.0" y="245" width="0.5" height="15.0" fill="rgb(212,35,8)" rx="2" ry="2" />
+<text  x="970.96" y="255.5" ></text>
+</g>
+<g >
+<title>alloc_perturb (10,101,010 samples, 0.05%)</title><rect x="140.5" y="165" width="0.5" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="143.48" y="175.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::readString (70,707,070 samples, 0.34%)</title><rect x="319.6" y="197" width="4.0" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="322.59" y="207.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="262.9" y="229" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="265.94" y="239.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::skipCommentTokens (40,404,040 samples, 0.19%)</title><rect x="361.9" y="229" width="2.3" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="364.94" y="239.5" ></text>
+</g>
+<g >
+<title>syscall_enter_from_user_mode (50,505,050 samples, 0.24%)</title><rect x="629.2" y="245" width="2.8" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="632.19" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (171,717,170 samples, 0.82%)</title><rect x="693.9" y="261" width="9.7" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="696.85" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (10,101,010 samples, 0.05%)</title><rect x="715.0" y="245" width="0.6" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="718.02" y="255.5" ></text>
+</g>
+<g >
+<title>exit_to_user_mode_prepare (60,606,060 samples, 0.29%)</title><rect x="1123.0" y="181" width="3.5" height="15.0" fill="rgb(228,108,25)" rx="2" ry="2" />
+<text  x="1126.05" y="191.5" ></text>
+</g>
+<g >
+<title>select_estimate_accuracy (30,303,030 samples, 0.15%)</title><rect x="618.3" y="197" width="1.7" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="621.31" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (40,404,040 samples, 0.19%)</title><rect x="696.1" y="229" width="2.3" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="699.14" y="239.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (282,828,280 samples, 1.36%)</title><rect x="240.6" y="197" width="16.0" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="243.62" y="207.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (10,101,010 samples, 0.05%)</title><rect x="1136.8" y="229" width="0.6" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="1139.78" y="239.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmChannel::read_from (474,747,470 samples, 2.28%)</title><rect x="653.2" y="277" width="26.9" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="656.22" y="287.5" >l..</text>
+</g>
+<g >
+<title>eventfd_poll (20,202,020 samples, 0.10%)</title><rect x="514.7" y="165" width="1.2" height="15.0" fill="rgb(231,124,29)" rx="2" ry="2" />
+<text  x="517.73" y="175.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::basic_string&lt;std::allocator&lt;char&gt; &gt; (20,202,020 samples, 0.10%)</title><rect x="1153.4" y="229" width="1.1" height="15.0" fill="rgb(209,22,5)" rx="2" ry="2" />
+<text  x="1156.38" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (121,212,120 samples, 0.58%)</title><rect x="94.7" y="229" width="6.9" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="97.69" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="382.5" y="213" width="0.6" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="385.54" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (30,303,030 samples, 0.15%)</title><rect x="978.3" y="261" width="1.7" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="981.26" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (10,101,010 samples, 0.05%)</title><rect x="971.4" y="245" width="0.6" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="974.40" y="255.5" ></text>
+</g>
+<g >
+<title>lcz::Logger::Debug (10,101,010 samples, 0.05%)</title><rect x="1141.4" y="229" width="0.5" height="15.0" fill="rgb(215,50,12)" rx="2" ry="2" />
+<text  x="1144.36" y="239.5" ></text>
+</g>
+<g >
+<title>_int_free (20,202,020 samples, 0.10%)</title><rect x="1166.0" y="181" width="1.1" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1168.97" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (30,303,030 samples, 0.15%)</title><rect x="737.3" y="261" width="1.8" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="740.34" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (20,202,020 samples, 0.10%)</title><rect x="737.9" y="245" width="1.2" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="740.91" y="255.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (40,404,040 samples, 0.19%)</title><rect x="838.1" y="181" width="2.2" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="841.06" y="191.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::RpcRequest::~RpcRequest (191,919,190 samples, 0.92%)</title><rect x="641.2" y="293" width="10.9" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="644.20" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::resolveReference (2,606,060,580 samples, 12.51%)</title><rect x="47.2" y="245" width="147.6" height="15.0" fill="rgb(232,124,29)" rx="2" ry="2" />
+<text  x="50.20" y="255.5" >Json::Value::resol..</text>
+</g>
+<g >
+<title>Json::BuiltStyledStreamWriter::writeValue (282,828,280 samples, 1.36%)</title><rect x="788.8" y="229" width="16.1" height="15.0" fill="rgb(252,217,51)" rx="2" ry="2" />
+<text  x="791.85" y="239.5" ></text>
+</g>
+<g >
+<title>std::ios_base::_M_dispose_callbacks (10,101,010 samples, 0.05%)</title><rect x="969.1" y="229" width="0.6" height="15.0" fill="rgb(233,130,31)" rx="2" ry="2" />
+<text  x="972.11" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::swapPayload (20,202,020 samples, 0.10%)</title><rect x="848.9" y="165" width="1.2" height="15.0" fill="rgb(254,225,54)" rx="2" ry="2" />
+<text  x="851.93" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="852.4" y="165" width="0.5" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="855.37" y="175.5" ></text>
+</g>
+<g >
+<title>_int_free (40,404,040 samples, 0.19%)</title><rect x="425.5" y="261" width="2.2" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="428.46" y="271.5" ></text>
+</g>
+<g >
+<title>__fget_files (141,414,140 samples, 0.68%)</title><rect x="988.6" y="133" width="8.0" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="991.56" y="143.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (20,202,020 samples, 0.10%)</title><rect x="692.7" y="261" width="1.2" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="695.71" y="271.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (60,606,060 samples, 0.29%)</title><rect x="365.9" y="261" width="3.5" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="368.95" y="271.5" ></text>
+</g>
+<g >
+<title>mem_cgroup_handle_over_high (10,101,010 samples, 0.05%)</title><rect x="640.6" y="213" width="0.6" height="15.0" fill="rgb(249,205,49)" rx="2" ry="2" />
+<text  x="643.63" y="223.5" ></text>
+</g>
+<g >
+<title>std::ios_base::~ios_base (20,202,020 samples, 0.10%)</title><rect x="968.5" y="245" width="1.2" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="971.54" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="703.0" y="213" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="706.01" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::find (252,525,250 samples, 1.21%)</title><rect x="902.7" y="213" width="14.3" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="905.73" y="223.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmChannel::write_to (353,535,350 samples, 1.70%)</title><rect x="1134.5" y="245" width="20.0" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="1137.49" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (50,505,050 samples, 0.24%)</title><rect x="877.0" y="165" width="2.8" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="879.97" y="175.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (20,202,020 samples, 0.10%)</title><rect x="680.1" y="277" width="1.2" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="683.12" y="287.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (70,707,070 samples, 0.34%)</title><rect x="410.0" y="245" width="4.0" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="413.01" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (20,202,020 samples, 0.10%)</title><rect x="148.5" y="181" width="1.1" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="151.49" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (60,606,060 samples, 0.29%)</title><rect x="641.2" y="229" width="3.4" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="644.20" y="239.5" ></text>
+</g>
+<g >
+<title>do_epoll_wait (10,101,010 samples, 0.05%)</title><rect x="628.0" y="245" width="0.6" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="631.04" y="255.5" ></text>
+</g>
+<g >
+<title>apparmor_file_permission (10,101,010 samples, 0.05%)</title><rect x="1117.9" y="117" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="1120.90" y="127.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (50,505,050 samples, 0.24%)</title><rect x="847.2" y="197" width="2.9" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="850.22" y="207.5" ></text>
+</g>
+<g >
+<title>operator new (50,505,050 samples, 0.24%)</title><rect x="668.7" y="261" width="2.8" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="671.67" y="271.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="382.5" y="229" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="385.54" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (20,202,020 samples, 0.10%)</title><rect x="735.1" y="229" width="1.1" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="738.05" y="239.5" ></text>
+</g>
+<g >
+<title>__fget_light (10,101,010 samples, 0.05%)</title><rect x="475.8" y="213" width="0.6" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="478.82" y="223.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (151,515,150 samples, 0.73%)</title><rect x="149.6" y="213" width="8.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="152.63" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (10,101,010 samples, 0.05%)</title><rect x="759.1" y="213" width="0.6" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="762.09" y="223.5" ></text>
+</g>
+<g >
+<title>__get_user_8 (20,202,020 samples, 0.10%)</title><rect x="1123.6" y="117" width="1.2" height="15.0" fill="rgb(242,171,41)" rx="2" ry="2" />
+<text  x="1126.62" y="127.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (20,202,020 samples, 0.10%)</title><rect x="117.0" y="197" width="1.2" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="120.01" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (20,202,020 samples, 0.10%)</title><rect x="399.7" y="277" width="1.2" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="402.71" y="287.5" ></text>
+</g>
+<g >
+<title>Json::StreamWriter::~StreamWriter (20,202,020 samples, 0.10%)</title><rect x="942.8" y="229" width="1.1" height="15.0" fill="rgb(212,33,7)" rx="2" ry="2" />
+<text  x="945.78" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::swapPayload (10,101,010 samples, 0.05%)</title><rect x="44.3" y="213" width="0.6" height="15.0" fill="rgb(254,225,54)" rx="2" ry="2" />
+<text  x="47.34" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (30,303,030 samples, 0.15%)</title><rect x="342.5" y="181" width="1.7" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="345.48" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (30,303,030 samples, 0.15%)</title><rect x="261.8" y="245" width="1.7" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="264.79" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (50,505,050 samples, 0.24%)</title><rect x="194.8" y="245" width="2.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="197.84" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (70,707,070 samples, 0.34%)</title><rect x="272.7" y="229" width="4.0" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="275.67" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="1166.0" y="197" width="1.1" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="1168.97" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (50,505,050 samples, 0.24%)</title><rect x="698.4" y="229" width="2.9" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="701.43" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="716.2" y="245" width="0.5" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="719.17" y="255.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="436.9" y="277" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="439.91" y="287.5" ></text>
+</g>
+<g >
+<title>std::has_facet&lt;std::ctype&lt;char&gt; &gt; (50,505,050 samples, 0.24%)</title><rect x="952.5" y="213" width="2.9" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="955.51" y="223.5" ></text>
+</g>
+<g >
+<title>tcache_get (40,404,040 samples, 0.19%)</title><rect x="669.2" y="229" width="2.3" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="672.24" y="239.5" ></text>
+</g>
+<g >
+<title>asm_sysvec_apic_timer_interrupt (10,101,010 samples, 0.05%)</title><rect x="617.7" y="117" width="0.6" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="620.74" y="127.5" ></text>
+</g>
+<g >
+<title>Json::StreamWriterBuilder::setDefaults (1,545,454,530 samples, 7.42%)</title><rect x="806.0" y="229" width="87.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="809.01" y="239.5" >Json::Stre..</text>
+</g>
+<g >
+<title>Json::Value::~Value (80,808,080 samples, 0.39%)</title><rect x="102.7" y="229" width="4.6" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="105.71" y="239.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="945.6" y="245" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="948.65" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (30,303,030 samples, 0.15%)</title><rect x="971.4" y="261" width="1.7" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="974.40" y="271.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (30,303,030 samples, 0.15%)</title><rect x="648.1" y="229" width="1.7" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="651.07" y="239.5" ></text>
+</g>
+<g >
+<title>_copy_from_user (10,101,010 samples, 0.05%)</title><rect x="1116.8" y="133" width="0.5" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="1119.75" y="143.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="723.6" y="229" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="726.61" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (80,808,080 samples, 0.39%)</title><rect x="145.1" y="213" width="4.5" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="148.05" y="223.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (20,202,020 samples, 0.10%)</title><rect x="1157.4" y="261" width="1.1" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1160.38" y="271.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (1,393,939,380 samples, 6.69%)</title><rect x="107.3" y="229" width="79.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="110.28" y="239.5" >[libjsonc..</text>
+</g>
+<g >
+<title>std::use_facet&lt;std::num_get&lt;char, std::istreambuf_iterator&lt;char, std::char_traits&lt;char&gt; &gt; &gt; &gt; (40,404,040 samples, 0.19%)</title><rect x="959.4" y="213" width="2.3" height="15.0" fill="rgb(224,87,20)" rx="2" ry="2" />
+<text  x="962.38" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (10,101,010 samples, 0.05%)</title><rect x="751.6" y="245" width="0.6" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="754.65" y="255.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (50,505,050 samples, 0.24%)</title><rect x="641.2" y="213" width="2.9" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="644.20" y="223.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="752.2" y="245" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="755.22" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (10,101,010 samples, 0.05%)</title><rect x="335.0" y="149" width="0.6" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="338.04" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (80,808,080 samples, 0.39%)</title><rect x="641.2" y="245" width="4.6" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="644.20" y="255.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (2,979,797,950 samples, 14.31%)</title><rect x="472.4" y="261" width="168.8" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="475.39" y="271.5" >do_syscall_64</text>
+</g>
+<g >
+<title>Json::Value::CZString::~CZString (10,101,010 samples, 0.05%)</title><rect x="94.1" y="229" width="0.6" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="97.12" y="239.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="404.9" y="261" width="0.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="407.86" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (20,202,020 samples, 0.10%)</title><rect x="892.4" y="197" width="1.2" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="895.42" y="207.5" ></text>
+</g>
+<g >
+<title>__put_user_nocheck_8 (10,101,010 samples, 0.05%)</title><rect x="635.5" y="181" width="0.6" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="638.48" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (90,909,090 samples, 0.44%)</title><rect x="394.6" y="261" width="5.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="397.56" y="271.5" ></text>
+</g>
+<g >
+<title>std::_Rb_tree_insert_and_rebalance (30,303,030 samples, 0.15%)</title><rect x="422.6" y="261" width="1.7" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="425.60" y="271.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="1160.2" y="245" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="1163.24" y="255.5" ></text>
+</g>
+<g >
+<title>exit_to_user_mode_loop (60,606,060 samples, 0.29%)</title><rect x="1123.0" y="165" width="3.5" height="15.0" fill="rgb(224,90,21)" rx="2" ry="2" />
+<text  x="1126.05" y="175.5" ></text>
+</g>
+<g >
+<title>exit_to_user_mode_prepare (161,616,160 samples, 0.78%)</title><rect x="632.0" y="229" width="9.2" height="15.0" fill="rgb(228,108,25)" rx="2" ry="2" />
+<text  x="635.05" y="239.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::readValue (1,040,404,030 samples, 5.00%)</title><rect x="305.3" y="245" width="58.9" height="15.0" fill="rgb(220,71,17)" rx="2" ry="2" />
+<text  x="308.29" y="255.5" >Json::..</text>
+</g>
+<g >
+<title>Json::Value::asBool (90,909,090 samples, 0.44%)</title><rect x="205.1" y="261" width="5.2" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="208.14" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (10,101,010 samples, 0.05%)</title><rect x="402.0" y="261" width="0.6" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="405.00" y="271.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (20,202,020 samples, 0.10%)</title><rect x="719.0" y="213" width="1.2" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="722.03" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (20,202,020 samples, 0.10%)</title><rect x="333.9" y="165" width="1.1" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="336.90" y="175.5" ></text>
+</g>
+<g >
+<title>eventfd_write (2,040,404,020 samples, 9.80%)</title><rect x="1001.7" y="149" width="115.6" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="1004.73" y="159.5" >eventfd_write</text>
+</g>
+<g >
+<title>Json::Value::initBasic (10,101,010 samples, 0.05%)</title><rect x="336.2" y="165" width="0.6" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="339.19" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (30,303,030 samples, 0.15%)</title><rect x="926.8" y="197" width="1.7" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="929.76" y="207.5" ></text>
+</g>
+<g >
+<title>_int_free (30,303,030 samples, 0.15%)</title><rect x="1132.8" y="229" width="1.7" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1135.77" y="239.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="732.8" y="213" width="0.5" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="735.76" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="436.9" y="293" width="0.6" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="439.91" y="303.5" ></text>
+</g>
+<g >
+<title>epoll_wait (3,242,424,210 samples, 15.57%)</title><rect x="457.5" y="293" width="183.7" height="15.0" fill="rgb(238,154,36)" rx="2" ry="2" />
+<text  x="460.51" y="303.5" >epoll_wait</text>
+</g>
+<g >
+<title>Json::Value::operator[] (323,232,320 samples, 1.55%)</title><rect x="902.7" y="229" width="18.3" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="905.73" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (50,505,050 samples, 0.24%)</title><rect x="97.6" y="213" width="2.8" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="100.56" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="403.1" y="245" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="406.14" y="255.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (10,101,010 samples, 0.05%)</title><rect x="674.4" y="245" width="0.6" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="677.39" y="255.5" ></text>
+</g>
+<g >
+<title>__cond_resched (20,202,020 samples, 0.10%)</title><rect x="496.4" y="181" width="1.2" height="15.0" fill="rgb(217,58,14)" rx="2" ry="2" />
+<text  x="499.42" y="191.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="1172.3" y="229" width="0.5" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="1175.26" y="239.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (40,404,040 samples, 0.19%)</title><rect x="921.0" y="229" width="2.3" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="924.04" y="239.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_construct&lt;char const*&gt; (10,101,010 samples, 0.05%)</title><rect x="1158.5" y="261" width="0.6" height="15.0" fill="rgb(214,43,10)" rx="2" ry="2" />
+<text  x="1161.53" y="271.5" ></text>
+</g>
+<g >
+<title>std::locale::~locale (10,101,010 samples, 0.05%)</title><rect x="970.8" y="245" width="0.6" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="973.82" y="255.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="1174.5" y="261" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1177.55" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (333,333,330 samples, 1.60%)</title><rect x="54.6" y="229" width="18.9" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="57.64" y="239.5" ></text>
+</g>
+<g >
+<title>operator new (30,303,030 samples, 0.15%)</title><rect x="342.5" y="197" width="1.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="345.48" y="207.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2,505,050,480 samples, 12.03%)</title><rect x="985.7" y="229" width="141.9" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="988.70" y="239.5" >entry_SYSCALL_64_a..</text>
+</g>
+<g >
+<title>Json::CharReaderBuilder::CharReaderBuilder (2,949,494,920 samples, 14.16%)</title><rect x="30.6" y="277" width="167.1" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="33.60" y="287.5" >Json::CharReaderBuild..</text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="402.0" y="229" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="405.00" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (20,202,020 samples, 0.10%)</title><rect x="1154.5" y="229" width="1.2" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1157.52" y="239.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::basic_string&lt;std::allocator&lt;char&gt; &gt; (30,303,030 samples, 0.15%)</title><rect x="678.4" y="261" width="1.7" height="15.0" fill="rgb(209,22,5)" rx="2" ry="2" />
+<text  x="681.40" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (50,505,050 samples, 0.24%)</title><rect x="890.7" y="213" width="2.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="893.71" y="223.5" ></text>
+</g>
+<g >
+<title>ktime_get_ts64 (10,101,010 samples, 0.05%)</title><rect x="626.9" y="229" width="0.6" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="629.90" y="239.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::readValue (272,727,270 samples, 1.31%)</title><rect x="326.5" y="213" width="15.4" height="15.0" fill="rgb(220,71,17)" rx="2" ry="2" />
+<text  x="329.46" y="223.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="968.5" y="229" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="971.54" y="239.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (141,414,140 samples, 0.68%)</title><rect x="928.5" y="197" width="8.0" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="931.48" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (50,505,050 samples, 0.24%)</title><rect x="41.5" y="213" width="2.8" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="44.47" y="223.5" ></text>
+</g>
+<g >
+<title>fput_many (50,505,050 samples, 0.24%)</title><rect x="620.6" y="213" width="2.9" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="623.60" y="223.5" ></text>
+</g>
+<g >
+<title>_int_free (212,121,210 samples, 1.02%)</title><rect x="283.0" y="213" width="12.0" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="285.97" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="927.9" y="181" width="0.6" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="930.90" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (20,202,020 samples, 0.10%)</title><rect x="728.8" y="245" width="1.1" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="731.76" y="255.5" ></text>
+</g>
+<g >
+<title>syscall_enter_from_user_mode (10,101,010 samples, 0.05%)</title><rect x="452.9" y="229" width="0.6" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="455.93" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (20,202,020 samples, 0.10%)</title><rect x="972.0" y="245" width="1.1" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="974.97" y="255.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="1151.1" y="213" width="0.6" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1154.09" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (131,313,130 samples, 0.63%)</title><rect x="816.9" y="197" width="7.4" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="819.89" y="207.5" ></text>
+</g>
+<g >
+<title>std::locale::locale (20,202,020 samples, 0.10%)</title><rect x="969.7" y="245" width="1.1" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="972.68" y="255.5" ></text>
+</g>
+<g >
+<title>_int_free (40,404,040 samples, 0.19%)</title><rect x="760.8" y="213" width="2.3" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="763.81" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (40,404,040 samples, 0.19%)</title><rect x="95.3" y="213" width="2.3" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="98.27" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (191,919,190 samples, 0.92%)</title><rect x="641.2" y="261" width="10.9" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="644.20" y="271.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (393,939,390 samples, 1.89%)</title><rect x="158.8" y="197" width="22.3" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="161.79" y="207.5" >_..</text>
+</g>
+<g >
+<title>checked_request2size (10,101,010 samples, 0.05%)</title><rect x="411.2" y="229" width="0.5" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="414.15" y="239.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="814.0" y="181" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="817.03" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (50,505,050 samples, 0.24%)</title><rect x="668.7" y="245" width="2.8" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="671.67" y="255.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (20,202,020 samples, 0.10%)</title><rect x="814.6" y="197" width="1.1" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="817.60" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (424,242,420 samples, 2.04%)</title><rect x="118.2" y="197" width="24.0" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="121.16" y="207.5" >_..</text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (60,606,060 samples, 0.29%)</title><rect x="820.9" y="181" width="3.4" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="823.89" y="191.5" ></text>
+</g>
+<g >
+<title>schedule (20,202,020 samples, 0.10%)</title><rect x="1125.3" y="149" width="1.2" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="1128.33" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::asInt64 (20,202,020 samples, 0.10%)</title><rect x="788.8" y="213" width="1.2" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="791.85" y="223.5" ></text>
+</g>
+<g >
+<title>Json::StreamWriterBuilder::newStreamWriter (585,858,580 samples, 2.81%)</title><rect x="893.6" y="245" width="33.2" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="896.57" y="255.5" >Js..</text>
+</g>
+<g >
+<title>Json::OurReader::readObject (959,595,950 samples, 4.61%)</title><rect x="307.6" y="229" width="54.3" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="310.58" y="239.5" >Json:..</text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="402.0" y="245" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="405.00" y="255.5" ></text>
+</g>
+<g >
+<title>std::ios_base::_M_init (90,909,090 samples, 0.44%)</title><rect x="962.8" y="229" width="5.2" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="965.81" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (111,111,110 samples, 0.53%)</title><rect x="879.8" y="165" width="6.3" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="882.84" y="175.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="1127.6" y="261" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="1130.62" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (30,303,030 samples, 0.15%)</title><rect x="406.6" y="277" width="1.7" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="409.58" y="287.5" ></text>
+</g>
+<g >
+<title>_int_free (20,202,020 samples, 0.10%)</title><rect x="931.3" y="149" width="1.2" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="934.34" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (80,808,080 samples, 0.39%)</title><rect x="379.1" y="261" width="4.6" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="382.11" y="271.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="699.6" y="181" width="0.5" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="702.57" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="752.8" y="261" width="1.1" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="755.79" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (30,303,030 samples, 0.15%)</title><rect x="415.2" y="229" width="1.7" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="418.16" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (20,202,020 samples, 0.10%)</title><rect x="715.6" y="261" width="1.1" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="718.60" y="271.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (80,808,080 samples, 0.39%)</title><rect x="759.7" y="229" width="4.5" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="762.66" y="239.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (20,202,020 samples, 0.10%)</title><rect x="64.9" y="213" width="1.2" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="67.94" y="223.5" ></text>
+</g>
+<g >
+<title>lcz::getrootLogger (141,414,140 samples, 0.68%)</title><rect x="1141.9" y="229" width="8.0" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="1144.93" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_read (282,828,280 samples, 1.36%)</title><rect x="437.5" y="293" width="16.0" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="440.48" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::asBool (10,101,010 samples, 0.05%)</title><rect x="899.9" y="229" width="0.5" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="902.86" y="239.5" ></text>
+</g>
+<g >
+<title>checked_request2size (20,202,020 samples, 0.10%)</title><rect x="68.9" y="197" width="1.2" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="71.94" y="207.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="199.4" y="213" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="202.42" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (20,202,020 samples, 0.10%)</title><rect x="843.8" y="165" width="1.1" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="846.78" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::asString[abi:cxx11] (70,707,070 samples, 0.34%)</title><rect x="711.0" y="277" width="4.0" height="15.0" fill="rgb(208,15,3)" rx="2" ry="2" />
+<text  x="714.02" y="287.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="156.5" y="197" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="159.50" y="207.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (20,202,020 samples, 0.10%)</title><rect x="964.5" y="197" width="1.2" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="967.53" y="207.5" ></text>
+</g>
+<g >
+<title>fput (20,202,020 samples, 0.10%)</title><rect x="625.8" y="229" width="1.1" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="628.75" y="239.5" ></text>
+</g>
+<g >
+<title>_int_free (30,303,030 samples, 0.15%)</title><rect x="764.2" y="229" width="1.8" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="767.24" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (40,404,040 samples, 0.19%)</title><rect x="146.2" y="197" width="2.3" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="149.20" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="1171.1" y="229" width="0.6" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="1174.12" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (70,707,070 samples, 0.34%)</title><rect x="1182.6" y="261" width="4.0" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1185.56" y="271.5" ></text>
+</g>
+<g >
+<title>std::_Rb_tree_insert_and_rebalance (90,909,090 samples, 0.44%)</title><rect x="181.1" y="213" width="5.2" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="184.11" y="223.5" ></text>
+</g>
+<g >
+<title>_int_malloc (20,202,020 samples, 0.10%)</title><rect x="359.1" y="149" width="1.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="362.08" y="159.5" ></text>
+</g>
+<g >
+<title>[shm_benchmark_server_zc] (20,202,020 samples, 0.10%)</title><rect x="944.5" y="245" width="1.1" height="15.0" fill="rgb(238,154,37)" rx="2" ry="2" />
+<text  x="947.50" y="255.5" ></text>
+</g>
+<g >
+<title>new_sync_read (101,010,100 samples, 0.48%)</title><rect x="446.6" y="181" width="5.8" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="449.63" y="191.5" ></text>
+</g>
+<g >
+<title>tcache_put (10,101,010 samples, 0.05%)</title><rect x="1163.7" y="229" width="0.5" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="1166.68" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (20,202,020 samples, 0.10%)</title><rect x="696.7" y="213" width="1.2" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="699.71" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (50,505,050 samples, 0.24%)</title><rect x="337.9" y="181" width="2.9" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="340.90" y="191.5" ></text>
+</g>
+<g >
+<title>Json::BuiltStyledStreamWriter::writeCommentBeforeValue (20,202,020 samples, 0.10%)</title><rect x="787.7" y="229" width="1.1" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="790.70" y="239.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (202,020,200 samples, 0.97%)</title><rect x="81.5" y="213" width="11.5" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="84.53" y="223.5" ></text>
+</g>
+<g >
+<title>_int_free (60,606,060 samples, 0.29%)</title><rect x="190.3" y="213" width="3.4" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="193.26" y="223.5" ></text>
+</g>
+<g >
+<title>__rseq_handle_notify_resume (40,404,040 samples, 0.19%)</title><rect x="1123.0" y="149" width="2.3" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="1126.05" y="159.5" ></text>
+</g>
+<g >
+<title>heap_for_ptr (10,101,010 samples, 0.05%)</title><rect x="763.7" y="181" width="0.5" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="766.67" y="191.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (20,202,020 samples, 0.10%)</title><rect x="923.9" y="213" width="1.1" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="926.90" y="223.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (20,202,020 samples, 0.10%)</title><rect x="922.2" y="213" width="1.1" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="925.18" y="223.5" ></text>
+</g>
+<g >
+<title>ep_done_scan (90,909,090 samples, 0.44%)</title><rect x="497.6" y="181" width="5.1" height="15.0" fill="rgb(214,43,10)" rx="2" ry="2" />
+<text  x="500.57" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (60,606,060 samples, 0.29%)</title><rect x="103.9" y="213" width="3.4" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="106.85" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (30,303,030 samples, 0.15%)</title><rect x="358.5" y="165" width="1.7" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="361.51" y="175.5" ></text>
+</g>
+<g >
+<title>__rseq_handle_notify_resume (101,010,100 samples, 0.48%)</title><rect x="634.3" y="197" width="5.8" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="637.34" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (50,505,050 samples, 0.24%)</title><rect x="733.3" y="261" width="2.9" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="736.34" y="271.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_stringbuf&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::overflow (60,606,060 samples, 0.29%)</title><rect x="800.9" y="181" width="3.4" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="803.86" y="191.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (10,101,010 samples, 0.05%)</title><rect x="93.5" y="213" width="0.6" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="96.55" y="223.5" ></text>
+</g>
+<g >
+<title>_int_free (30,303,030 samples, 0.15%)</title><rect x="642.3" y="181" width="1.8" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="645.35" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupMeta (50,505,050 samples, 0.24%)</title><rect x="871.3" y="165" width="2.8" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="874.25" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (80,808,080 samples, 0.39%)</title><rect x="809.4" y="197" width="4.6" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="812.45" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (101,010,100 samples, 0.48%)</title><rect x="39.2" y="229" width="5.7" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="42.19" y="239.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (10,101,010 samples, 0.05%)</title><rect x="879.3" y="149" width="0.5" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="882.26" y="159.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (20,202,020 samples, 0.10%)</title><rect x="721.3" y="261" width="1.2" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="724.32" y="271.5" ></text>
+</g>
+<g >
+<title>__schedule (848,484,840 samples, 4.07%)</title><rect x="570.2" y="149" width="48.1" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="573.24" y="159.5" >__sc..</text>
+</g>
+<g >
+<title>schedule_hrtimeout_range (30,303,030 samples, 0.15%)</title><rect x="623.5" y="213" width="1.7" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="626.46" y="223.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="394.0" y="261" width="0.6" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="396.99" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (30,303,030 samples, 0.15%)</title><rect x="729.9" y="229" width="1.7" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="732.90" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::swapPayload (20,202,020 samples, 0.10%)</title><rect x="336.8" y="181" width="1.1" height="15.0" fill="rgb(254,225,54)" rx="2" ry="2" />
+<text  x="339.76" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="699.6" y="197" width="0.5" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="702.57" y="207.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmChannel::read_from (10,101,010 samples, 0.05%)</title><rect x="1186.6" y="373" width="0.5" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="1189.57" y="383.5" ></text>
+</g>
+<g >
+<title>mutex_lock (212,121,210 samples, 1.02%)</title><rect x="515.9" y="181" width="12.0" height="15.0" fill="rgb(217,57,13)" rx="2" ry="2" />
+<text  x="518.88" y="191.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::currentValue (20,202,020 samples, 0.10%)</title><rect x="329.3" y="181" width="1.2" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="332.32" y="191.5" ></text>
+</g>
+<g >
+<title>ksys_write (2,303,030,280 samples, 11.06%)</title><rect x="988.0" y="181" width="130.5" height="15.0" fill="rgb(205,4,1)" rx="2" ry="2" />
+<text  x="990.99" y="191.5" >ksys_write</text>
+</g>
+<g >
+<title>Json::Value::initBasic (40,404,040 samples, 0.19%)</title><rect x="374.0" y="277" width="2.2" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="376.96" y="287.5" ></text>
+</g>
+<g >
+<title>update_blocked_averages (10,101,010 samples, 0.05%)</title><rect x="617.7" y="37" width="0.6" height="15.0" fill="rgb(240,163,38)" rx="2" ry="2" />
+<text  x="620.74" y="47.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (60,606,060 samples, 0.29%)</title><rect x="258.4" y="245" width="3.4" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="261.36" y="255.5" ></text>
+</g>
+<g >
+<title>lcz::getrootLogger (10,101,010 samples, 0.05%)</title><rect x="1186.6" y="357" width="0.5" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="1189.57" y="367.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="868.4" y="165" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="871.39" y="175.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (80,808,080 samples, 0.39%)</title><rect x="400.9" y="277" width="4.5" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="403.85" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (60,606,060 samples, 0.29%)</title><rect x="836.9" y="197" width="3.4" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="839.92" y="207.5" ></text>
+</g>
+<g >
+<title>rseq_get_rseq_cs.isra.0 (10,101,010 samples, 0.05%)</title><rect x="639.5" y="165" width="0.6" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="642.49" y="175.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="1151.1" y="197" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="1154.09" y="207.5" ></text>
+</g>
+<g >
+<title>hrtimer_start_range_ns (101,010,100 samples, 0.48%)</title><rect x="543.9" y="165" width="5.7" height="15.0" fill="rgb(244,179,42)" rx="2" ry="2" />
+<text  x="546.92" y="175.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (20,202,020 samples, 0.10%)</title><rect x="732.2" y="229" width="1.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="735.19" y="239.5" ></text>
+</g>
+<g >
+<title>aa_file_perm (10,101,010 samples, 0.05%)</title><rect x="1117.3" y="117" width="0.6" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="1120.32" y="127.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="142.2" y="197" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="145.19" y="207.5" ></text>
+</g>
+<g >
+<title>Json::valueToString[abi:cxx11] (40,404,040 samples, 0.19%)</title><rect x="790.0" y="213" width="2.3" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="792.99" y="223.5" ></text>
+</g>
+<g >
+<title>ksys_read (10,101,010 samples, 0.05%)</title><rect x="452.4" y="229" width="0.5" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="455.36" y="239.5" ></text>
+</g>
+<g >
+<title>__strlen_evex (40,404,040 samples, 0.19%)</title><rect x="918.7" y="213" width="2.3" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="921.75" y="223.5" ></text>
+</g>
+<g >
+<title>lcz::Logger::Debug (10,101,010 samples, 0.05%)</title><rect x="663.5" y="261" width="0.6" height="15.0" fill="rgb(215,50,12)" rx="2" ry="2" />
+<text  x="666.52" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="715.0" y="229" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="718.02" y="239.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_ptr_inplace&lt;lcz_rpc::RpcRequest, std::allocator&lt;lcz_rpc::RpcRequest&gt;,  (10,101,010 samples, 0.05%)</title><rect x="1179.1" y="293" width="0.6" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="1182.13" y="303.5" ></text>
+</g>
+<g >
+<title>_int_free (20,202,020 samples, 0.10%)</title><rect x="432.3" y="229" width="1.2" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="435.33" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (90,909,090 samples, 0.44%)</title><rect x="345.3" y="197" width="5.2" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="348.34" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (20,202,020 samples, 0.10%)</title><rect x="835.8" y="181" width="1.1" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="838.77" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (20,202,020 samples, 0.10%)</title><rect x="386.0" y="261" width="1.1" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="388.97" y="271.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (20,202,020 samples, 0.10%)</title><rect x="946.8" y="229" width="1.1" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="949.79" y="239.5" ></text>
+</g>
+<g >
+<title>tcache_put (20,202,020 samples, 0.10%)</title><rect x="426.6" y="245" width="1.1" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="429.61" y="255.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (30,303,030 samples, 0.15%)</title><rect x="1151.7" y="229" width="1.7" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1154.66" y="239.5" ></text>
+</g>
+<g >
+<title>operator delete (10,101,010 samples, 0.05%)</title><rect x="668.1" y="261" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="671.10" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::asUInt (20,202,020 samples, 0.10%)</title><rect x="210.3" y="261" width="1.1" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="213.29" y="271.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (191,919,190 samples, 0.92%)</title><rect x="1160.8" y="277" width="10.9" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1163.81" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator== (10,101,010 samples, 0.05%)</title><rect x="727.6" y="261" width="0.6" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="730.61" y="271.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::skipCommentTokens (10,101,010 samples, 0.05%)</title><rect x="364.2" y="245" width="0.6" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="367.23" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (30,303,030 samples, 0.15%)</title><rect x="718.5" y="229" width="1.7" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="721.46" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::resolveReference (676,767,670 samples, 3.25%)</title><rect x="389.4" y="293" width="38.3" height="15.0" fill="rgb(232,124,29)" rx="2" ry="2" />
+<text  x="392.41" y="303.5" >Jso..</text>
+</g>
+<g >
+<title>main::{lambda (8,747,474,660 samples, 42.00%)</title><rect x="681.3" y="293" width="495.5" height="15.0" fill="rgb(215,50,12)" rx="2" ry="2" />
+<text  x="684.26" y="303.5" >main::{lambda</text>
+</g>
+<g >
+<title>Json::Value::releasePayload (20,202,020 samples, 0.10%)</title><rect x="339.6" y="165" width="1.2" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="342.62" y="175.5" ></text>
+</g>
+<g >
+<title>tcache_get (80,808,080 samples, 0.39%)</title><rect x="395.1" y="245" width="4.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="398.13" y="255.5" ></text>
+</g>
+<g >
+<title>checked_request2size (10,101,010 samples, 0.05%)</title><rect x="1155.1" y="213" width="0.6" height="15.0" fill="rgb(252,219,52)" rx="2" ry="2" />
+<text  x="1158.09" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (151,515,150 samples, 0.73%)</title><rect x="391.1" y="277" width="8.6" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="394.13" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::swapPayload (10,101,010 samples, 0.05%)</title><rect x="406.0" y="245" width="0.6" height="15.0" fill="rgb(254,225,54)" rx="2" ry="2" />
+<text  x="409.00" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="867.8" y="149" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="870.82" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (10,101,010 samples, 0.05%)</title><rect x="1189.4" y="357" width="0.6" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1192.43" y="367.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_replace (80,808,080 samples, 0.39%)</title><rect x="673.8" y="261" width="4.6" height="15.0" fill="rgb(226,98,23)" rx="2" ry="2" />
+<text  x="676.82" y="271.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::RpcResponse::~RpcResponse (131,313,130 samples, 0.63%)</title><rect x="1164.2" y="261" width="7.5" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="1167.25" y="271.5" ></text>
+</g>
+<g >
+<title>_int_free (50,505,050 samples, 0.24%)</title><rect x="296.7" y="229" width="2.9" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="299.70" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::find (50,505,050 samples, 0.24%)</title><rect x="717.3" y="261" width="2.9" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="720.31" y="271.5" ></text>
+</g>
+<g >
+<title>free_perturb (10,101,010 samples, 0.05%)</title><rect x="644.1" y="181" width="0.5" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="647.06" y="191.5" ></text>
+</g>
+<g >
+<title>all (20,828,282,620 samples, 100%)</title><rect x="10.0" y="405" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="415.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (181,818,180 samples, 0.87%)</title><rect x="906.7" y="181" width="10.3" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="909.73" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="432.3" y="245" width="1.2" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="435.33" y="255.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="701.3" y="229" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="704.29" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (212,121,210 samples, 1.02%)</title><rect x="753.9" y="277" width="12.1" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="756.94" y="287.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="1174.5" y="245" width="0.6" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1177.55" y="255.5" ></text>
+</g>
+<g >
+<title>rseq_get_rseq_cs.isra.0 (10,101,010 samples, 0.05%)</title><rect x="1124.8" y="117" width="0.5" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="1127.76" y="127.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmChannel::read_request (515,151,510 samples, 2.47%)</title><rect x="652.1" y="293" width="29.2" height="15.0" fill="rgb(217,56,13)" rx="2" ry="2" />
+<text  x="655.08" y="303.5" >lc..</text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="379.7" y="245" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="382.68" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_put (30,303,030 samples, 0.15%)</title><rect x="367.7" y="229" width="1.7" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="370.66" y="239.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::skipSpaces (50,505,050 samples, 0.24%)</title><rect x="323.6" y="197" width="2.9" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="326.60" y="207.5" ></text>
+</g>
+<g >
+<title>operator new (50,505,050 samples, 0.24%)</title><rect x="419.7" y="261" width="2.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="422.74" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (101,010,100 samples, 0.48%)</title><rect x="1165.4" y="229" width="5.7" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="1168.39" y="239.5" ></text>
+</g>
+<g >
+<title>arena_for_chunk (20,202,020 samples, 0.10%)</title><rect x="295.0" y="213" width="1.1" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="297.99" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (20,202,020 samples, 0.10%)</title><rect x="723.0" y="261" width="1.2" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="726.04" y="271.5" ></text>
+</g>
+<g >
+<title>arena_for_chunk (10,101,010 samples, 0.05%)</title><rect x="435.8" y="261" width="0.5" height="15.0" fill="rgb(252,216,51)" rx="2" ry="2" />
+<text  x="438.76" y="271.5" ></text>
+</g>
+<g >
+<title>operator new (20,202,020 samples, 0.10%)</title><rect x="732.2" y="245" width="1.1" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="735.19" y="255.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="256.6" y="245" width="1.8" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="259.64" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (30,303,030 samples, 0.15%)</title><rect x="694.4" y="229" width="1.7" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="697.42" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="848.4" y="165" width="0.5" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="851.36" y="175.5" ></text>
+</g>
+<g >
+<title>_int_malloc (60,606,060 samples, 0.29%)</title><rect x="882.7" y="149" width="3.4" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="885.70" y="159.5" ></text>
+</g>
+<g >
+<title>_copy_to_iter (10,101,010 samples, 0.05%)</title><rect x="450.6" y="149" width="0.6" height="15.0" fill="rgb(227,105,25)" rx="2" ry="2" />
+<text  x="453.64" y="159.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (30,303,030 samples, 0.15%)</title><rect x="718.5" y="245" width="1.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="721.46" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (10,101,010 samples, 0.05%)</title><rect x="141.6" y="181" width="0.6" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="144.62" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator= (151,515,150 samples, 0.73%)</title><rect x="815.7" y="213" width="8.6" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="818.74" y="223.5" ></text>
+</g>
+<g >
+<title>std::basic_ios&lt;char, std::char_traits&lt;char&gt; &gt;::init (383,838,380 samples, 1.84%)</title><rect x="946.2" y="245" width="21.8" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="949.22" y="255.5" >s..</text>
+</g>
+<g >
+<title>Json::Value::Comments::operator= (10,101,010 samples, 0.05%)</title><rect x="336.2" y="149" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="339.19" y="159.5" ></text>
+</g>
+<g >
+<title>_int_malloc (111,111,110 samples, 0.53%)</title><rect x="861.5" y="149" width="6.3" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="864.52" y="159.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (10,101,010 samples, 0.05%)</title><rect x="1163.7" y="261" width="0.5" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="1166.68" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (30,303,030 samples, 0.15%)</title><rect x="930.8" y="181" width="1.7" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="933.77" y="191.5" ></text>
+</g>
+<g >
+<title>operator new (30,303,030 samples, 0.15%)</title><rect x="701.9" y="245" width="1.7" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="704.86" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (10,101,010 samples, 0.05%)</title><rect x="759.1" y="229" width="0.6" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="762.09" y="239.5" ></text>
+</g>
+<g >
+<title>ksys_read (212,121,210 samples, 1.02%)</title><rect x="440.3" y="213" width="12.1" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="443.34" y="223.5" ></text>
+</g>
+<g >
+<title>std::__ostream_insert&lt;char, std::char_traits&lt;char&gt; &gt; (222,222,220 samples, 1.07%)</title><rect x="792.3" y="213" width="12.6" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="795.28" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="844.9" y="165" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="847.93" y="175.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="382.0" y="213" width="0.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="384.97" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (10,101,010 samples, 0.05%)</title><rect x="335.0" y="165" width="0.6" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="338.04" y="175.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (10,101,010 samples, 0.05%)</title><rect x="844.4" y="149" width="0.5" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="847.35" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::~CZString (10,101,010 samples, 0.05%)</title><rect x="717.9" y="245" width="0.6" height="15.0" fill="rgb(234,134,32)" rx="2" ry="2" />
+<text  x="720.89" y="255.5" ></text>
+</g>
+<g >
+<title>tcache_get (40,404,040 samples, 0.19%)</title><rect x="1184.3" y="245" width="2.3" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="1187.28" y="255.5" ></text>
+</g>
+<g >
+<title>ep_send_events (10,101,010 samples, 0.05%)</title><rect x="620.0" y="213" width="0.6" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="623.03" y="223.5" ></text>
+</g>
+<g >
+<title>std::locale::operator= (40,404,040 samples, 0.19%)</title><rect x="965.7" y="213" width="2.3" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="968.67" y="223.5" ></text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_construct&lt;char const*&gt; (121,212,120 samples, 0.58%)</title><rect x="1179.7" y="293" width="6.9" height="15.0" fill="rgb(214,43,10)" rx="2" ry="2" />
+<text  x="1182.70" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (20,202,020 samples, 0.10%)</title><rect x="100.4" y="213" width="1.2" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="103.42" y="223.5" ></text>
+</g>
+<g >
+<title>__softirqentry_text_start (10,101,010 samples, 0.05%)</title><rect x="617.7" y="69" width="0.6" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="620.74" y="79.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="435.2" y="277" width="1.1" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="438.19" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::~Value (595,959,590 samples, 2.86%)</title><rect x="266.4" y="277" width="33.7" height="15.0" fill="rgb(226,97,23)" rx="2" ry="2" />
+<text  x="269.37" y="287.5" >Js..</text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="1174.0" y="261" width="0.5" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="1176.98" y="271.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="72.9" y="213" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="75.95" y="223.5" ></text>
+</g>
+<g >
+<title>Json::BuiltStyledStreamWriter::BuiltStyledStreamWriter (70,707,070 samples, 0.34%)</title><rect x="895.9" y="229" width="4.0" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="898.86" y="239.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (30,303,030 samples, 0.15%)</title><rect x="950.8" y="213" width="1.7" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="953.80" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (10,101,010 samples, 0.05%)</title><rect x="351.1" y="181" width="0.5" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="354.07" y="191.5" ></text>
+</g>
+<g >
+<title>copy_user_generic_unrolled (10,101,010 samples, 0.05%)</title><rect x="451.8" y="149" width="0.6" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="454.78" y="159.5" ></text>
+</g>
+<g >
+<title>Json::Value::initBasic (101,010,100 samples, 0.48%)</title><rect x="33.5" y="229" width="5.7" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="36.46" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="1172.3" y="245" width="0.5" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="1175.26" y="255.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (10,101,010 samples, 0.05%)</title><rect x="757.9" y="229" width="0.6" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="760.94" y="239.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="1160.2" y="277" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1163.24" y="287.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="799.7" y="181" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="802.72" y="191.5" ></text>
+</g>
+<g >
+<title>tcache_get (40,404,040 samples, 0.19%)</title><rect x="411.7" y="229" width="2.3" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="414.73" y="239.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (191,919,190 samples, 0.92%)</title><rect x="740.8" y="229" width="10.8" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="743.78" y="239.5" ></text>
+</g>
+<g >
+<title>operator new (404,040,400 samples, 1.94%)</title><rect x="158.2" y="213" width="22.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="161.22" y="223.5" >o..</text>
+</g>
+<g >
+<title>Json::Value::dupMeta (10,101,010 samples, 0.05%)</title><rect x="350.5" y="181" width="0.6" height="15.0" fill="rgb(227,101,24)" rx="2" ry="2" />
+<text  x="353.49" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::operator&lt; (545,454,540 samples, 2.62%)</title><rect x="225.7" y="213" width="30.9" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="228.74" y="223.5" >Js..</text>
+</g>
+<g >
+<title>Json::Value::releasePayload (10,101,010 samples, 0.05%)</title><rect x="387.1" y="261" width="0.6" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="390.12" y="271.5" ></text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (606,060,600 samples, 2.91%)</title><rect x="108.4" y="213" width="34.4" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="111.43" y="223.5" >Js..</text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (606,060,600 samples, 2.91%)</title><rect x="852.9" y="197" width="34.4" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="855.94" y="207.5" >[l..</text>
+</g>
+<g >
+<title>Json::Value::CZString::CZString (10,101,010 samples, 0.05%)</title><rect x="380.3" y="229" width="0.5" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="383.25" y="239.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (80,808,080 samples, 0.39%)</title><rect x="379.1" y="277" width="4.6" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="382.11" y="287.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (10,101,010 samples, 0.05%)</title><rect x="102.1" y="213" width="0.6" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="105.13" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (60,606,060 samples, 0.29%)</title><rect x="383.7" y="277" width="3.4" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="386.69" y="287.5" ></text>
+</g>
+<g >
+<title>_int_free (50,505,050 samples, 0.24%)</title><rect x="1138.5" y="213" width="2.9" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1141.50" y="223.5" ></text>
+</g>
+<g >
+<title>std::ostream::sentry::sentry (10,101,010 samples, 0.05%)</title><rect x="805.4" y="213" width="0.6" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="808.44" y="223.5" ></text>
+</g>
+<g >
+<title>__fget_light (30,303,030 samples, 0.15%)</title><rect x="474.1" y="197" width="1.7" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="477.10" y="207.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="1187.1" y="357" width="1.2" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="1190.14" y="367.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (232,323,230 samples, 1.12%)</title><rect x="440.3" y="245" width="13.2" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="443.34" y="255.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="927.9" y="165" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="930.90" y="175.5" ></text>
+</g>
+<g >
+<title>std::has_facet&lt;std::num_get&lt;char, std::istreambuf_iterator&lt;char, std::char_traits&lt;char&gt; &gt; &gt; &gt; (20,202,020 samples, 0.10%)</title><rect x="955.4" y="213" width="1.1" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="958.37" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::operator[] (101,010,100 samples, 0.48%)</title><rect x="716.7" y="277" width="5.8" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="719.74" y="287.5" ></text>
+</g>
+<g >
+<title>__fget_light (141,414,140 samples, 0.68%)</title><rect x="988.6" y="149" width="8.0" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="991.56" y="159.5" ></text>
+</g>
+<g >
+<title>ep_send_events (616,161,610 samples, 2.96%)</title><rect x="493.0" y="197" width="34.9" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="495.99" y="207.5" >ep..</text>
+</g>
+<g >
+<title>Json::Value::operator= (10,101,010 samples, 0.05%)</title><rect x="102.1" y="229" width="0.6" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="105.13" y="239.5" ></text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (20,202,020 samples, 0.10%)</title><rect x="418.6" y="229" width="1.1" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="421.59" y="239.5" ></text>
+</g>
+<g >
+<title>__fdget (30,303,030 samples, 0.15%)</title><rect x="474.1" y="213" width="1.7" height="15.0" fill="rgb(214,41,10)" rx="2" ry="2" />
+<text  x="477.10" y="223.5" ></text>
+</g>
+<g >
+<title>Json::Value::dupPayload (20,202,020 samples, 0.10%)</title><rect x="402.6" y="261" width="1.1" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="405.57" y="271.5" ></text>
+</g>
+<g >
+<title>rw_verify_area (20,202,020 samples, 0.10%)</title><rect x="1117.3" y="149" width="1.2" height="15.0" fill="rgb(218,64,15)" rx="2" ry="2" />
+<text  x="1120.32" y="159.5" ></text>
+</g>
+<g >
+<title>_int_free (90,909,090 samples, 0.44%)</title><rect x="937.1" y="181" width="5.1" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="940.06" y="191.5" ></text>
+</g>
+<g >
+<title>__GI___libc_read (282,828,280 samples, 1.36%)</title><rect x="437.5" y="277" width="16.0" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="440.48" y="287.5" ></text>
+</g>
+<g >
+<title>operator new (10,101,010 samples, 0.05%)</title><rect x="1153.9" y="213" width="0.6" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="1156.95" y="223.5" ></text>
+</g>
+<g >
+<title>main::{lambda (10,101,010 samples, 0.05%)</title><rect x="1189.4" y="373" width="0.6" height="15.0" fill="rgb(215,50,12)" rx="2" ry="2" />
+<text  x="1192.43" y="383.5" ></text>
+</g>
+<g >
+<title>__fget_files (50,505,050 samples, 0.24%)</title><rect x="442.6" y="165" width="2.9" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="445.63" y="175.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (10,101,010 samples, 0.05%)</title><rect x="701.3" y="213" width="0.6" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="704.29" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (50,505,050 samples, 0.24%)</title><rect x="202.3" y="229" width="2.8" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="205.28" y="239.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.30] (10,101,010 samples, 0.05%)</title><rect x="1153.9" y="197" width="0.6" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="1156.95" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (10,101,010 samples, 0.05%)</title><rect x="357.4" y="181" width="0.5" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="360.36" y="191.5" ></text>
+</g>
+<g >
+<title>__memcpy_evex_unaligned_erms (10,101,010 samples, 0.05%)</title><rect x="800.3" y="181" width="0.6" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="803.29" y="191.5" ></text>
+</g>
+<g >
+<title>free_perturb (10,101,010 samples, 0.05%)</title><rect x="1170.5" y="181" width="0.6" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="1173.54" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::resolveReference (555,555,550 samples, 2.67%)</title><rect x="722.5" y="277" width="31.4" height="15.0" fill="rgb(232,124,29)" rx="2" ry="2" />
+<text  x="725.46" y="287.5" >Js..</text>
+</g>
+<g >
+<title>Json::Value::Value (141,414,140 samples, 0.68%)</title><rect x="371.1" y="293" width="8.0" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="374.10" y="303.5" ></text>
+</g>
+<g >
+<title>Json::Value::releasePayload (121,212,120 samples, 0.58%)</title><rect x="428.3" y="277" width="6.9" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="431.32" y="287.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (20,202,020 samples, 0.10%)</title><rect x="767.7" y="277" width="1.1" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="770.67" y="287.5" ></text>
+</g>
+<g >
+<title>__rseq_handle_notify_resume (10,101,010 samples, 0.05%)</title><rect x="632.0" y="213" width="0.6" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="635.05" y="223.5" ></text>
+</g>
+<g >
+<title>tcache_put (10,101,010 samples, 0.05%)</title><rect x="762.5" y="197" width="0.6" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="765.52" y="207.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (20,202,020 samples, 0.10%)</title><rect x="700.1" y="213" width="1.2" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="703.15" y="223.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="360.8" y="181" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="363.80" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::Value (262,626,260 samples, 1.26%)</title><rect x="690.4" y="277" width="14.9" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="693.42" y="287.5" ></text>
+</g>
+<g >
+<title>std::use_facet&lt;std::num_put&lt;char, std::ostreambuf_iterator&lt;char, std::char_traits&lt;char&gt; &gt; &gt; &gt; (20,202,020 samples, 0.10%)</title><rect x="961.7" y="213" width="1.1" height="15.0" fill="rgb(223,86,20)" rx="2" ry="2" />
+<text  x="964.67" y="223.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (20,202,020 samples, 0.10%)</title><rect x="723.0" y="245" width="1.2" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="726.04" y="255.5" ></text>
+</g>
+<g >
+<title>Json::StreamWriterBuilder::StreamWriterBuilder (1,545,454,530 samples, 7.42%)</title><rect x="806.0" y="245" width="87.6" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="809.01" y="255.5" >Json::Stre..</text>
+</g>
+<g >
+<title>Json::Value::asString[abi:cxx11] (40,404,040 samples, 0.19%)</title><rect x="900.4" y="229" width="2.3" height="15.0" fill="rgb(208,15,3)" rx="2" ry="2" />
+<text  x="903.44" y="239.5" ></text>
+</g>
+<g >
+<title>flatbuffers::vector_downward&lt;unsigned int&gt;::reallocate (40,404,040 samples, 0.19%)</title><rect x="1128.2" y="261" width="2.3" height="15.0" fill="rgb(212,33,7)" rx="2" ry="2" />
+<text  x="1131.20" y="271.5" ></text>
+</g>
+<g >
+<title>_int_free (60,606,060 samples, 0.29%)</title><rect x="1167.7" y="197" width="3.4" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1170.68" y="207.5" ></text>
+</g>
+<g >
+<title>finish_task_switch.isra.0 (10,101,010 samples, 0.05%)</title><rect x="1125.9" y="117" width="0.6" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1128.91" y="127.5" ></text>
+</g>
+<g >
+<title>std::_Rb_tree_insert_and_rebalance (10,101,010 samples, 0.05%)</title><rect x="360.2" y="181" width="0.6" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="363.22" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::swap (10,101,010 samples, 0.05%)</title><rect x="406.0" y="261" width="0.6" height="15.0" fill="rgb(216,52,12)" rx="2" ry="2" />
+<text  x="409.00" y="271.5" ></text>
+</g>
+<g >
+<title>std::_Rb_tree_insert_and_rebalance (20,202,020 samples, 0.10%)</title><rect x="886.1" y="181" width="1.2" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="889.13" y="191.5" ></text>
+</g>
+<g >
+<title>__fdget_pos (50,505,050 samples, 0.24%)</title><rect x="442.6" y="197" width="2.9" height="15.0" fill="rgb(216,55,13)" rx="2" ry="2" />
+<text  x="445.63" y="207.5" ></text>
+</g>
+<g >
+<title>[libjsoncpp.so.1.9.5] (242,424,240 samples, 1.16%)</title><rect x="739.1" y="261" width="13.7" height="15.0" fill="rgb(248,199,47)" rx="2" ry="2" />
+<text  x="742.06" y="271.5" ></text>
+</g>
+<g >
+<title>lcz_rpc::ShmServerZc::start (6,878,787,810 samples, 33.03%)</title><rect x="770.5" y="277" width="389.7" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="773.53" y="287.5" >lcz_rpc::ShmServerZc::start</text>
+</g>
+<g >
+<title>__memcmp_evex_movbe (40,404,040 samples, 0.19%)</title><rect x="974.8" y="197" width="2.3" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="977.83" y="207.5" ></text>
+</g>
+<g >
+<title>Json::OurReader::readToken (20,202,020 samples, 0.10%)</title><rect x="340.8" y="181" width="1.1" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="343.77" y="191.5" ></text>
+</g>
+<g >
+<title>Json::Value::type (10,101,010 samples, 0.05%)</title><rect x="351.1" y="165" width="0.5" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="354.07" y="175.5" ></text>
+</g>
+<g >
+<title>_int_free (10,101,010 samples, 0.05%)</title><rect x="435.2" y="261" width="0.6" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="438.19" y="271.5" ></text>
+</g>
+<g >
+<title>copy_user_enhanced_fast_string (10,101,010 samples, 0.05%)</title><rect x="451.2" y="149" width="0.6" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="454.21" y="159.5" ></text>
+</g>
+</g>
+</svg>

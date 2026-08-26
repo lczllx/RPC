@@ -22,9 +22,8 @@ CTestTestfile.cmake
 Makefile
 !**/CMakeLists.txt
 
-# compile_commands.json 由 CMake 生成，通常保留给 IDE 用，但可以忽略
-# 取消下面注释来忽略：
-# compile_commands.json
+# compile_commands.json 由 CMake 生成，含机器相关绝对路径，不提交；本地保留给 IDE/clangd 用
+compile_commands.json
 
 # ====== IDE / 编辑器 ======
 .vscode/
@@ -58,7 +57,6 @@ vgcore.*
 perf.data
 perf.data.*
 *.perf
-*.svg
 
 # ====== 包管理 ======
 conanbuildinfo.*
