@@ -66,7 +66,7 @@ namespace lcz_rpc
             // 优雅退出
             void stop()
             {
-                _hb_loop_ptr->quit();    // 停止心跳扫描事件循环
+                _hb_loop_ptr->Quit();    // 停止心跳扫描事件循环
                 _leader_elector->stop(); // 释放选举租约
                 _server->stop();         // 停止监听
             }
@@ -116,8 +116,8 @@ namespace lcz_rpc
 
             // 心跳扫描定时器（Muduo库实现）
             HeartbeatConfig _hb_config;                    // 心跳扫描配置
-            muduo::net::EventLoopThread _hb_loop;          // 心跳扫描线程
-            muduo::net::EventLoop *_hb_loop_ptr = nullptr; // 心跳扫描线程指针
+            EventLoopThread _hb_loop;          // 心跳扫描线程
+            EventLoop *_hb_loop_ptr = nullptr; // 心跳扫描线程指针
         };
 
         // RPC 服务端类：提供 RPC 方法注册与调用，可选向注册中心注册并心跳/负载上报
@@ -232,7 +232,7 @@ namespace lcz_rpc
             void stop()
             {
                 if (_enablediscover && _report_loop_ptr)
-                    _report_loop_ptr->quit(); // 停止心跳+负载上报的事件循环
+                    _report_loop_ptr->Quit(); // 停止心跳+负载上报的事件循环
                 _server->stop();              // 唤醒 muduo 事件循环使其从 start() 返回
                 if (_server_thread.joinable())
                     _server_thread.join(); // 等待后台线程退出
@@ -340,9 +340,9 @@ namespace lcz_rpc
             HeartbeatConfig _hb_config; // 心跳配置
 
             // 这是和负载上报相关的设置
-            muduo::net::EventLoopThread _report_loop;          // 上报负载的线程
-            muduo::net::EventLoop *_report_loop_ptr = nullptr; // 上报负载的线程指针
-            muduo::net::TimerId _report_timer;                 // 上报负载的定时器
+            EventLoopThread _report_loop;          // 上报负载的线程
+            EventLoop *_report_loop_ptr = nullptr; // 上报负载的线程指针
+            TimerId _report_timer;                 // 上报负载的定时器
             std::mutex _methods_mutex;                         // 方法互斥锁
             std::vector<std::string> _registered_methods;      // 已注册的方法
             std::atomic<bool> _report_started{false};          // CAS 保证多个 registerMethod 调用只启动一次心跳+负载上报定时器

@@ -2,13 +2,7 @@
 #include <memory>
 #include <functional>
 
-namespace muduo
-{
-    namespace net
-    {
-        class EventLoop;
-    }
-}
+class EventLoop; // dlmuduo 事件循环（前向声明，避免引入完整头文件）
 
 namespace lcz_rpc
 {
@@ -26,7 +20,7 @@ namespace lcz_rpc
             using LeadershipCallback = std::function<void(bool is_leader)>;
 
             virtual bool isLeader() const = 0;                                                    // 当前是否持有 leader 身份
-            virtual void start(muduo::net::EventLoop *loop, LeadershipCallback cb = nullptr) = 0; // 启动选举定时器
+            virtual void start(EventLoop *loop, LeadershipCallback cb = nullptr) = 0; // 启动选举定时器
             virtual void stop() = 0;                                                              // 停止选举、释放 lease
             virtual ~ILeaderElector() = default;
         };

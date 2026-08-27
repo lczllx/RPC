@@ -8,7 +8,7 @@ endif()
 # rpc/src/../src/server/rpc_server.hpp 这样的 __FILE__ 导致日志难看且 IDE 无法跳转。
 # 这里算一次，下面三个 target 复用。
 get_filename_component(LRPC_SRC_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/.." REALPATH)
-get_filename_component(LRPC_MUDUO_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/../muduo" REALPATH)
+get_filename_component(LRPC_MUDUO_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/../muduo/include" REALPATH)
 get_filename_component(LRPC_BLD_PARENT "${CMAKE_CURRENT_BINARY_DIR}/.." REALPATH)
 
 #新增静态库 编译 registry_store 实现，给 lcz_rpc 链接用
@@ -68,8 +68,7 @@ target_link_libraries(lcz_rpc
   INTERFACE
     lcz_registry_store
     lcz_shm
-    muduo_net
-    muduo_base
+    lczmuduo
     jsoncpp_lib
     lcz_rpc_proto
     pthread

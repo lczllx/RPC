@@ -4,9 +4,9 @@
 
 [English](README.md)
 
-> 基于 muduo + Protobuf 的轻量级 C++20 RPC 框架。支持 TCP / 共享内存零拷贝双传输模式，集成 etcd 注册中心、熔断器、令牌桶流控、分布式追踪、Prometheus 可观测性、HTTP→RPC API 网关。
+> 基于 dlmuduo + Protobuf 的轻量级 C++20 RPC 框架。支持 TCP / 共享内存零拷贝双传输模式，集成 etcd 注册中心、熔断器、令牌桶流控、分布式追踪、Prometheus 可观测性、HTTP→RPC API 网关。
 
-作者：lczllx · 语言：C++20 · 网络：muduo · 传输：TCP & SHM 零拷贝 · 序列化：Protobuf, JSON, FlatBuffers · 构建：CMake
+作者：lczllx · 语言：C++20 · 网络：dlmuduo · 传输：TCP & SHM 零拷贝 · 序列化：Protobuf, JSON, FlatBuffers · 构建：CMake
 
 ## 功能亮点
 
@@ -15,9 +15,9 @@
 - **调用方式**：同步、`std::future` 异步、回调三种模式
 - **序列化可插拔**：`ISerializer` 抽象接口，默认 Protobuf，支持 JSON 调试、FlatBuffers 零拷贝读
 - **分布式追踪**：`trace_id` + `span_id` 全链路透传
-- **多客户端并发**：SHM 路径服务端 muduo `EventLoopThread` 线程池，per-client 独立 ring buffer
+- **多客户端并发**：SHM 路径服务端 dlmuduo `EventLoopThread` 线程池，per-client 独立 ring buffer
 - **可观测性**：内建 Prometheus `/metrics` 端点（文本协议 0.0.4），暴露请求量/延迟直方图/并发度/错误数/连接数/熔断状态/令牌桶余量/进程级指标，覆盖 brpc `/vars` 核心项
-- **API 网关**：基于同一套 muduo 基础设施的 HTTP→RPC 网关，支持路由匹配/限流/熔断/指标/全链路追踪，独立进程零侵入部署
+- **API 网关**：基于同一套 dlmuduo 基础设施的 HTTP→RPC 网关，支持路由匹配/限流/熔断/指标/全链路追踪，独立进程零侵入部署
 
 ## 性能：lyqtRpc vs brpc
 
@@ -116,7 +116,7 @@ Provider ──REGISTER/HEARTBEAT──> Registry(etcd) <──DISCOVER── Co
 - **注册存储**：`LCZ_ETCD` 环境变量切换 Memory/Etcd 后端，默认单机内存模式
 - **熔断器**：三态（CLOSED→OPEN→HALF_OPEN），method×host 粒度，支持内存/etcd 持久化
 - **流控**：`TokenBucket` + `BACKOFF` 自动退避重试
-- **线程池**：muduo `EventLoopThread`，per-client 独立 ring buffer，无锁 SPSC
+- **线程池**：dlmuduo `EventLoopThread`，per-client 独立 ring buffer，无锁 SPSC
 
 > 详细的流程图、注册发现、心跳摘除、超时控制见 [docs/cn/architecture.md](docs/cn/architecture.md)
 
@@ -132,7 +132,7 @@ lyqtRpc/
 │   ├── tests/                # 76 个 GTest 单测
 │   ├── example/              # 示例 + 压测
 │   ├── proto/                # protobuf 定义
-│   └── muduo/                # Git 子模块
+│   └── muduo/                # dlmuduo 网络库（Git 子模块）
 ├── gateway/
 │   ├── src/                  # HttpServer, HttpRouter, GatewayHandler, DiagnoseHandler
 │   └── example/              # gateway_server 启动入口

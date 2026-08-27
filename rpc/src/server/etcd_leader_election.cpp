@@ -1,7 +1,7 @@
 #include "etcd_leader_election.hpp"
 #include "etcd_registry_store.hpp"
 #include "general/log_system/lcz_log.h"
-#include <muduo/net/EventLoop.h>
+#include "EventLoop.hpp"
 #include <jsoncpp/json/json.h>
 #include <unistd.h>
 
@@ -40,7 +40,7 @@ namespace lcz_rpc
 
         bool EtcdLeaderElector::isLeader() const { return _is_leader; }
 
-        void EtcdLeaderElector::start(muduo::net::EventLoop *loop, LeadershipCallback cb)
+        void EtcdLeaderElector::start(EventLoop *loop, LeadershipCallback cb)
         {
             _loop = loop;
             _callback = std::move(cb);
@@ -60,7 +60,7 @@ namespace lcz_rpc
             _is_leader = false;
         }
 
-        // 每 TICK_INTERVAL_SEC（1s）由 muduo 定时器触发
+        // 每 TICK_INTERVAL_SEC（1s）由 dlmuduo 定时器触发
         void EtcdLeaderElector::electionTick()
         {
             if (_is_leader)

@@ -1,10 +1,10 @@
 #pragma once
 // =============================================================================
-// shm_server_proto.hpp — SHM + Protobuf 零拷贝 Server（muduo EventLoopThreadPool）
+// shm_server_proto.hpp — SHM + Protobuf 零拷贝 Server（dlmuduo EventLoopThread 线程池）
 // =============================================================================
 // 写端: req_write_ptr → SerializeToArray 直接进 ring buffer（零拷贝）
 // 读端: read_request → ParseFromString
-// 线程池: muduo::net::EventLoopThreadPool + Channel 包装 req_fd
+// 线程池: dlmuduo EventLoopThread + Channel 包装 req_fd
 // =============================================================================
 
 #include "general/abstract.hpp"
@@ -12,9 +12,9 @@
 #include "general/shm_connection.hpp"
 #include "general/message.hpp"
 #include "general/log_system/lcz_log.h"
-#include "muduo/net/EventLoop.h"
-#include "muduo/net/EventLoopThread.h"
-#include "muduo/net/Channel.h"
+#include "EventLoop.hpp"
+#include "LoopThread.hpp"
+#include "Channel.hpp"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/time.h>
@@ -63,11 +63,11 @@ namespace lcz_rpc
                 return;
             }
 
-            // muduo EventLoop 线程池（每个 worker 一个 EventLoopThread）
+            // dlmuduo EventLoop 线程池（每个 worker 一个 EventLoopThread）
             for (int i = 0; i < _worker_count; ++i)
             {
-                auto t = std::make_unique<muduo::net::EventLoopThread>();
-                muduo::net::EventLoop *loop = t->startLoop();
+                auto t = std::make_unique<EventLoopThread>();
+                EventLoop *loop = t->startLoop();
                 _workers.push_back({std::move(t), loop});
             }
 
@@ -130,10 +130,10 @@ namespace lcz_rpc
                 if (_cb_connection)
                     _cb_connection(conn);
 
-                // muduo Channel 包装 req_fd，注册到 worker EventLoop
+                // dlmuduo Channel 包装 req_fd，注册到 worker EventLoop
                 auto *workerLoop = _workers[round_robin++ % _worker_count].loop;
-                auto ch = std::make_unique<muduo::net::Channel>(workerLoop, req_fd);
-                ch->setReadCallback([this, entry, req_fd](muduo::Timestamp)
+                auto ch = std::make_unique<Channel>(workerLoop, req_fd);
+                ch->SetReadCallback([this, entry, req_fd]()
                                     {
                 uint64_t val; (void)::read(req_fd, &val, sizeof(val));
                 std::string body; MsgType type;
@@ -145,8 +145,8 @@ namespace lcz_rpc
                     }
                 } });
                 auto *ch_raw = ch.get();
-                workerLoop->runInLoop([ch_raw]()
-                                      { ch_raw->enableReading(); });
+                workerLoop->RunInLoop([ch_raw]()
+                                      { ch_raw->EnableRead(); });
 
                 {
                     std::lock_guard<std::mutex> lk(_mtx);
@@ -180,7 +180,7 @@ namespace lcz_rpc
             for (auto &e : _clients)
                 e->channel.destroy();
             for (auto &w : _workers)
-                w.loop->quit();
+                w.loop->Quit();
         }
 
     private:
@@ -198,13 +198,13 @@ namespace lcz_rpc
 
         struct Worker
         {
-            std::unique_ptr<muduo::net::EventLoopThread> thread;
-            muduo::net::EventLoop *loop;
+            std::unique_ptr<EventLoopThread> thread;
+            EventLoop *loop;
         };
         std::vector<Worker> _workers;
         std::mutex _mtx;
         std::vector<std::shared_ptr<ClientEntry>> _clients;
-        std::vector<std::unique_ptr<muduo::net::Channel>> _channels;
+        std::vector<std::unique_ptr<Channel>> _channels;
     };
 
 } // namespace lcz_rpc

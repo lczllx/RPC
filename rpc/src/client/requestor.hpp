@@ -15,8 +15,6 @@
 #include<functional>
 #include<chrono>
 #include "general/publicconfig.hpp"
-#include "muduo/net/EventLoop.h"
-#include "muduo/net/TcpConnection.h"
 
 namespace lcz_rpc
 {
@@ -37,7 +35,7 @@ namespace lcz_rpc
                 ReqCallback callback;
                 std::promise<BaseMessage::ptr> response;
                 BaseMessage::ptr request;
-                muduo::net::TimerId timer_id;  // 超时定时器 ID（用于取消定时器）
+                TimerId timer_id;  // 超时定时器 ID（用于取消定时器）
                 bool timeout_triggered = false;  // 是否已触发超时
             };
             // 处理服务端响应：根据消息 id 匹配请求，触发对应的 promise 或回调
@@ -150,13 +148,13 @@ namespace lcz_rpc
                     return false;
                 }
 
-                // 设置超时定时器：muduo runAfter 到期后跨线程回调 onTimeout
+                // 设置超时定时器：dlmuduo runAfter 到期后跨线程回调 onTimeout
                 auto* muduo_conn = dynamic_cast<MuduoConnection*>(conn.get());
                 if(muduo_conn && muduo_conn->getLoop())
                 {
                     double timeout_sec = timeout.count() / 1000.0;
                     std::string req_id = req->rid();
-                    muduo::net::TimerId tid = muduo_conn->getLoop()->runAfter(timeout_sec,
+                    TimerId tid = muduo_conn->getLoop()->runAfter(timeout_sec,
                         [this, req_id]() { this->onTimeout(req_id); });
                     {
                         std::unique_lock<std::mutex> lock(_mutex);
@@ -189,7 +187,7 @@ namespace lcz_rpc
                 if(async_resp.wait_for(timeout) == std::future_status::timeout)
                 {
                     LCZ_ERROR("Requestor sync recv timeout id=%s", req->rid().c_str());
-                    // 先尝试取消 muduo 定时器，避免之后在 loop 里再触发一次 onTimeout
+                    // 先尝试取消 dlmuduo 定时器，避免之后在 loop 里再触发一次 onTimeout
                     ReqDescribe::ptr desc = getDesc(req->rid());
                     if(desc)
                     {

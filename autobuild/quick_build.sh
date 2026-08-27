@@ -44,7 +44,7 @@ echo ""
 
 # 初始化子模块（在 rpc 目录下执行，git 会自动处理相对路径）
 if [ ! -d "muduo" ] || [ -z "$(ls -A muduo 2>/dev/null)" ]; then
-    echo "[INFO] 初始化 muduo 子模块..."
+    echo "[INFO] 初始化 dlmuduo 子模块..."
     git submodule update --init --recursive
 fi
 

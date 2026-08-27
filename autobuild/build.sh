@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # RPC框架自动构建脚本
-# 功能：检查依赖、拉取muduo子模块、配置并编译项目
+# 功能：检查依赖、拉取dlmuduo子模块、配置并编译项目
 # 用法: bash build.sh   （不要用 sh build.sh）
 
 set -e  # 遇到错误立即退出
@@ -106,7 +106,7 @@ print_info "g++ 版本: $GXX_VERSION ✓"
 # 2. 检查并安装系统依赖（没有则自动安装）
 print_info "检查系统依赖..."
 
-# Boost（muduo 需要）
+# Boost（etcd base64 编解码需要）
 try_install_pkg "dpkg -l libboost-dev 2>/dev/null | grep -q '^ii' || test -d /usr/include/boost" "libboost-dev" "boost-devel"
 print_info "Boost 库已就绪 ✓"
 
@@ -144,24 +144,24 @@ try_install_optional \
   "flatbuffers-compiler libflatbuffers-dev" \
   "flatbuffers-compiler flatbuffers-devel"
 
-# 3. 初始化并更新git子模块（muduo）
-print_info "初始化 git 子模块（muduo）..."
+# 3. 初始化并更新git子模块（dlmuduo）
+print_info "初始化 git 子模块（dlmuduo）..."
 
 # 在 rpc 目录下执行 git submodule（git 会自动处理相对路径）
 if [ ! -d "muduo" ] || [ -z "$(ls -A muduo 2>/dev/null)" ]; then
-    print_info "muduo 目录为空，初始化子模块..."
+    print_info "dlmuduo 目录为空，初始化子模块..."
     git submodule update --init --recursive
 else
-    print_info "muduo 目录已存在，同步父项目记录的提交（不拉远程）..."
+    print_info "dlmuduo 目录已存在，同步父项目记录的提交（不拉远程）..."
     git submodule update --recursive
 fi
 
 if [ ! -d "muduo" ] || [ -z "$(ls -A muduo 2>/dev/null)" ]; then
-    print_error "muduo 子模块初始化失败"
+    print_error "dlmuduo 子模块初始化失败"
     exit 1
 fi
 
-print_info "muduo 子模块已就绪 ✓"
+print_info "dlmuduo 子模块已就绪 ✓"
 
 # 4. 创建构建目录
 BUILD_DIR="build"

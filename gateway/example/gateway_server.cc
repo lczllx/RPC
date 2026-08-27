@@ -10,7 +10,6 @@
 #include "general/metrics.hpp"
 #include "general/metrics_server.hpp"
 #include "general/metrics_hooks.hpp"
-#include <muduo/net/EventLoop.h>
 #include <iostream>
 #include <csignal>
 #include <atomic>
@@ -18,25 +17,23 @@
 using namespace lcz_rpc::metrics; // Labels, METRICS_* 宏
 using lcz_rpc::TokenBucket;
 
-// Signal handler 需要访问 EventLoop::quit()，但 sigaction 回调是 C 函数，
-// 不能传 lambda capture。用文件作用域的静态指针桥接——和 MetricsServer 同款模式。
-// muduo::EventLoop::quit() 是线程安全的（内部往 eventfd 写字节唤醒 epoll_wait），
+// Signal handler 需要访问 HttpServer::stop()（内部 dlmuduo TcpServer::Stop() →
+// EventLoop::Quit()），但 sigaction 回调是 C 函数，不能传 lambda capture。
+// 用文件作用域的静态指针桥接——和 MetricsServer 同款模式。
+// dlmuduo 的 Quit() 是线程安全的（内部往 eventfd 写字节唤醒 epoll_wait），
 // 解决了"手写 while(accept) 阻塞时 signal 无法退出"的问题（见 shm-serialization-pitfalls.md 第 4 条）。
-static muduo::net::EventLoop *g_loop = nullptr;
+static lcz_gateway::HttpServer *g_server = nullptr;
 
 static void onSignal(int)
 {
-    if (g_loop)
-        g_loop->quit();
+    if (g_server)
+        g_server->stop();
 }
 
 int main(int argc, char* argv[])
 {
     signal(SIGINT, onSignal);
     signal(SIGTERM, onSignal);
-
-    muduo::net::EventLoop loop;
-    g_loop = &loop;
 
     // ---- 命令行参数 ----
     std::string backend_host = "127.0.0.1";
@@ -77,7 +74,8 @@ int main(int argc, char* argv[])
                     { resp->setBody(R"({"status":"ok"})"); });
 
     // ---- HTTP Server ----
-    lcz_gateway::HttpServer srv(&loop, static_cast<uint16_t>(http_port), 4);
+    lcz_gateway::HttpServer srv(static_cast<uint16_t>(http_port), 4);
+    g_server = &srv; // 供信号处理器跨线程调用 stop()
     srv.setCallback([&](const lcz_gateway::HttpReq &req,
                         lcz_gateway::HttpResp *resp)
                     {
@@ -124,12 +122,11 @@ int main(int argc, char* argv[])
             METRICS_COUNTER("gateway_errors_total", "Gateway error count", els).inc();
         } });
 
-    srv.start();
     std::cout << "[gateway] :" << http_port << " ready"
               << " (backend " << backend_host << ":" << backend_port
               << ", metrics :" << metrics_port << ")" << std::endl;
 
-    loop.loop();
+    srv.start(); // 阻塞进入主事件循环，直到信号处理器跨线程调用 srv.stop()
     MetricsServer::stop();
     return 0;
 }

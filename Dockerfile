@@ -1,7 +1,7 @@
 # =============================================================================
 # LCZ RPC — 多阶段镜像
 # =============================================================================
-# 构建（无需手动初始化子模块，muduo 缺失时自动从 GitHub 拉取）：
+# 构建（无需手动初始化子模块，dlmuduo 缺失时自动从 GitHub 拉取）：
 #   docker compose up -d
 #   docker compose logs -f          # 查看日志
 #   docker compose down -v          # 停止并清理数据卷
@@ -35,13 +35,13 @@ WORKDIR /src
 COPY rpc/ /src/rpc/
 COPY gateway/ /src/gateway/
 
-# 若 clone 时没用 --recursive，muduo 子模块目录为空 → 自动下载
+# 若 clone 时没用 --recursive，dlmuduo 子模块目录为空 → 自动下载
 RUN if [ ! -f /src/rpc/muduo/CMakeLists.txt ]; then \
-        echo ">>> muduo 子模块未初始化，自动拉取..."; \
+        echo ">>> dlmuduo 子模块未初始化，自动拉取..."; \
         mkdir -p /src/rpc/muduo && \
-        wget -qO- https://github.com/chenshuo/muduo/archive/f1fc77e0c13b80e5086ff457362c8a86d1b609d4.tar.gz | \
+        wget -qO- https://github.com/lczllx/dlmuduo/archive/refs/heads/main.tar.gz | \
         tar -xz --strip-components=1 -C /src/rpc/muduo && \
-        echo ">>> muduo 拉取完成"; \
+        echo ">>> dlmuduo 拉取完成"; \
     fi
 
 WORKDIR /src/rpc

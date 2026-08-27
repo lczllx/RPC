@@ -104,38 +104,11 @@ target_include_directories(lcz_rpc_proto PUBLIC
   ${Protobuf_INCLUDE_DIRS}
 )
 
-# 若 git clone 时没用 --recursive，muduo 目录为空 → 自动从 GitHub 拉取
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/muduo/CMakeLists.txt")
-    message(STATUS "muduo 子模块未初始化，自动拉取...")
-    set(MUDUO_URL "https://github.com/chenshuo/muduo/archive/f1fc77e0c13b80e5086ff457362c8a86d1b609d4.tar.gz")
-    set(MUDUO_TGZ "${CMAKE_BINARY_DIR}/muduo.tar.gz")
-
-    file(DOWNLOAD "${MUDUO_URL}" "${MUDUO_TGZ}" SHOW_PROGRESS STATUS dl_status)
-    list(GET dl_status 0 dl_code)
-    if(NOT dl_code EQUAL 0)
-        list(GET dl_status 1 dl_msg)
-        message(FATAL_ERROR "muduo 下载失败: ${dl_msg}\n请手动执行: git submodule update --init")
-    endif()
-
-    execute_process(
-        COMMAND tar -xzf "${MUDUO_TGZ}"
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-        RESULT_VARIABLE tar_result
-    )
-    file(REMOVE "${MUDUO_TGZ}")
-    if(NOT tar_result EQUAL 0)
-        message(FATAL_ERROR "muduo 解压失败，请手动执行: git submodule update --init")
-    endif()
-
-    file(GLOB muduo_src_dir LIST_DIRECTORIES true "${CMAKE_BINARY_DIR}/muduo-*")
-    list(LENGTH muduo_src_dir muduo_count)
-    if(muduo_count EQUAL 0)
-        message(FATAL_ERROR "muduo 解压后未找到源码目录，请手动执行: git submodule update --init")
-    endif()
-    list(GET muduo_src_dir 0 muduo_dir)
-    file(RENAME "${muduo_dir}" "${CMAKE_CURRENT_SOURCE_DIR}/muduo")
-    message(STATUS "muduo 拉取完成")
-endif()
+# dlmuduo（自有网络库）已作为子目录 vendored 在 muduo/，直接随本工程编译，无需拉取外部子模块。
+# 它的 CMakeLists 通过 LCZMUDUO_TOP_LEVEL 识别子目录模式，只构建 lczmuduo 静态库。
+# 注意：dlmuduo 自带一份 lcz 日志库（rpc/muduo/include/log_system），已改名为 dlmuduo 私有
+# 命名空间（namespace dlmuduo + DLMUDUO_* 宏），避免和宿主 rpc/src/general/log_system 的
+# lcz 命名空间在同 TU 重定义冲突，同时保持 dlmuduo 作为独立项目可单独构建/提交远端。
 
 # FlatBuffers（SHM 零拷贝序列化适配层）
 # 优先使用项目本地安装，其次系统安装
@@ -188,9 +161,7 @@ else()
   set(LCZ_HAVE_FLATBUFFERS FALSE)
 endif()
 
-set(MUDUO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)#关掉 muduo 自带的 example
-# 进入 muduo/CMakeLists.txt->创建 muduo_net (STATIC)
-#→ libmuduo_net.a→ 创建 muduo_base (STATIC) → libmuduo_base.a→ 回到当前文件
+# 进入 muduo/CMakeLists.txt（dlmuduo）→ 创建 lczmuduo (STATIC) → liblczmuduo.a → 回到当前文件
 add_subdirectory(muduo)
 
 add_subdirectory(src)

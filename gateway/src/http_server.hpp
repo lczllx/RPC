@@ -2,34 +2,31 @@
 // =============================================================================
 // http_server.hpp — HTTP/1.1 服务器（Phase 1：HTTP 接入层）
 // =============================================================================
-// 底层网络：muduo::net::TcpServer（accept / epoll / IO 线程池 / Buffer / 连接管理），
-// 不手写 socket/epoll，不管理线程生命周期。和 RpcServer 用的是完全相同的 muduo 基础设施。
+// 底层网络：dlmuduo::TcpServer（accept / epoll / IO 线程池 / Buffer / 连接管理），
+// 不手写 socket/epoll，不管理线程生命周期。和 RpcServer 用的是完全相同的 dlmuduo 基础设施。
+// （原基于 muduo，已迁移到自有网络库 dlmuduo；dlmuduo 的 TcpServer 自带 base loop，
+//   构造函数只接收端口号，Start() 阻塞进入主事件循环，不再需要外部传入 EventLoop。）
 //
 // 上层解析：手写 HTTP 请求行 + 头部 + Content-Length body 的拆解逻辑。
-// 不用 muduo::net::HttpServer 的原因：它的 POST body 处理是 FIXME（HttpContext.cc
-// 的 kExpectBody 状态体为空），无法读取 JSON 请求体，对 API 网关不可用。
 //
 // 线程模型：
-//   外部传入一个 muduo::net::EventLoop&，HttpServer 不持有 loop 的所有权。
-//   setThreadNum(N) 控制 muduo IO 线程池大小，每个连接收到的数据由 muduo 回调
+//   setThreadNum(N) 控制 dlmuduo IO 线程池大小，每个连接收到的数据由 dlmuduo 回调
 //   drive，解析全程在 IO 线程栈上完成——不创建额外线程、不跨线程传递请求状态、
-//   不做异步派发。响应组装使用 muduo::net::Buffer，复用 muduo 的 I/O 路径。
+//   不做异步派发。响应组装使用 dlmuduo::Buffer，复用 dlmuduo 的 I/O 路径。
 //
 // 用法（和 RpcServer 同款接口风格）：
-//   muduo::net::EventLoop loop;
-//   lcz_gateway::HttpServer srv(&loop, 8080, 4);
+//   lcz_gateway::HttpServer srv(8080, 4);
 //   srv.setCallback([](const HttpReq& req, HttpResp* resp) { ... });
-//   srv.start();
-//   loop.loop();
+//   srv.start();  // 阻塞，直到 srv.stop() 被（信号处理器等）跨线程调用
 // =============================================================================
-#include <muduo/net/TcpServer.h>
-#include <muduo/net/TcpConnection.h>
-#include <muduo/net/Buffer.h>
-#include <muduo/net/EventLoop.h>
-#include <muduo/net/InetAddress.h>
+#include "TcpServer.hpp"
+#include "Connection.hpp"
+#include "Buffer.hpp"
+#include "CallbackTypes.hpp"
 #include <string>
 #include <map>
 #include <cstring>
+#include <strings.h> // strcasecmp
 #include <functional>
 
 namespace lcz_gateway
@@ -61,53 +58,67 @@ namespace lcz_gateway
     public:
         using Callback = std::function<void(const HttpReq &, HttpResp *)>;
 
-        // loop: 外部 EventLoop，所有权在调用方（通常在主线程栈上）
         // port: 监听端口
-        // thread_num: muduo IO 线程数，默认 4，和 RpcServer 一致
-        HttpServer(muduo::net::EventLoop *loop, uint16_t port, int thread_num = 4)
-            : _server(loop,
-                      muduo::net::InetAddress(static_cast<uint16_t>(port)),
-                      "GatewayHttp",
-                      muduo::net::TcpServer::kReusePort)
+        // thread_num: dlmuduo IO 线程数，默认 4，和 RpcServer 一致
+        HttpServer(uint16_t port, int thread_num = 4)
+            : _server(port)
         {
-            _server.setThreadNum(thread_num);
-            // 消息回调绑定到本类的 onMessage，由 muduo IO 线程驱动
-            _server.setMessageCallback(
-                [this](const muduo::net::TcpConnectionPtr &conn,
-                       muduo::net::Buffer *buf, muduo::Timestamp)
+            if (thread_num > 0)
+                _server.SetThreadCnt(thread_num);
+            // 消息回调绑定到本类的 onMessage，由 dlmuduo IO 线程驱动
+            // （dlmuduo 的 MessageCallBack 为 (PtrConnection, Buffer*)，无 Timestamp）
+            _server.SetMessageCallBack(
+                [this](const PtrConnection &conn, Buffer *buf)
                 {
                     onMessage(conn, buf);
                 });
         }
 
         void setCallback(const Callback &cb) { _cb = cb; }
-        void setThreadNum(int n) { _server.setThreadNum(n); }
-        void start() { _server.start(); }
+        void setThreadNum(int n) { _server.SetThreadCnt(n); }
+        void start() { _server.Start(); } // 阻塞进入主事件循环
+        void stop() { _server.Stop(); }   // 线程安全，唤醒 Start() 返回
 
     private:
+        // 从 Buffer 读一行（去掉结尾 \r\n 或 \n）。
+        // 行不完整（没有换行符）返回 false 且不消费任何字节，等下次 onMessage。
+        // dlmuduo 的 FindcrLf() 返回指向 '\n' 的指针（不含行首），与 muduo findCRLF()
+        // 返回 '\r' 不同，故这里单独封装以统一剥离行尾。
+        static bool readLine(Buffer *buf, std::string *line)
+        {
+            char *lf = buf->FindcrLf();
+            if (!lf)
+                return false; // 行不完整，等下次 onMessage
+
+            const char *rp = buf->GetReadPtr();
+            size_t raw_len = static_cast<size_t>(lf - rp); // 到 '\n' 之前的字节数（含可能的前置 '\r'）
+            size_t content_len = raw_len;
+            if (content_len > 0 && rp[content_len - 1] == '\r')
+                --content_len; // 去掉 '\r'
+
+            line->assign(rp, content_len);
+            buf->MoveReadoffset(static_cast<uint64_t>(raw_len + 1)); // 消费行内容 + '\n'（含 '\r'）
+            return true;
+        }
+
         // ---- HTTP 请求解析 ----
         // 在单个 onMessage 回调中完成"请求行→头部→body"的同步解析。
-        // 粘包/半包由 muduo::net::Buffer 和返回语义处理：数据不够时直接 return，
-        // muduo 下次触发 onMessage 时 buf 中已追加新到达的字节，继续从上次中断处解析。
+        // 粘包/半包由 dlmuduo Buffer 和返回语义处理：数据不够时直接 return，
+        // dlmuduo 下次触发 onMessage 时 buf 中已追加新到达的字节，继续从上次中断处解析。
         // 单个请求最大 body 上限 10 MB，防止恶意大包撑爆内存。
-        void onMessage(const muduo::net::TcpConnectionPtr &conn,
-                       muduo::net::Buffer *buf)
+        void onMessage(const PtrConnection &conn, Buffer *buf)
         {
             // ---- 请求行：METHOD SP PATH SP HTTP/1.x CRLF ----
-            const char *crlf = buf->findCRLF();
-            if (!crlf)
+            std::string request_line;
+            if (!readLine(buf, &request_line))
                 return; // 行不完整，等下次 onMessage
-
-            size_t line_len = static_cast<size_t>(crlf - buf->peek());
-            std::string request_line(buf->peek(), line_len);
-            buf->retrieve(line_len + 2); // 消费请求行 + CRLF
 
             HttpReq req;
             size_t sp1 = request_line.find(' ');
             size_t sp2 = request_line.find(' ', sp1 + 1);
             if (sp1 == std::string::npos || sp2 == std::string::npos)
             {
-                conn->shutdown(); // 格式错误，直接关连接，不回复（防御恶意扫描）
+                conn->Shutdown(); // 格式错误，直接关连接，不回复（防御恶意扫描）
                 return;
             }
             req.method = request_line.substr(0, sp1);
@@ -117,19 +128,12 @@ namespace lcz_gateway
             int content_length = 0;
             for (;;)
             {
-                const char *line_crlf = buf->findCRLF();
-                if (!line_crlf)
+                std::string line;
+                if (!readLine(buf, &line))
                     return; // 不完整
 
-                size_t len = static_cast<size_t>(line_crlf - buf->peek());
-                if (len == 0)
-                {
-                    buf->retrieve(2); // 空行 = 头结束标志
-                    break;
-                }
-
-                std::string line(buf->peek(), len);
-                buf->retrieve(len + 2);
+                if (line.empty())
+                    break; // 空行 = 头结束标志
 
                 size_t colon = line.find(':');
                 if (colon == std::string::npos)
@@ -160,15 +164,15 @@ namespace lcz_gateway
             {
                 if (content_length > 10 * 1024 * 1024)
                 { // 10 MB 硬上限
-                    conn->shutdown();
+                    conn->Shutdown();
                     return;
                 }
-                // muduo Buffer 可能分包到达——readableBytes() < content_length
-                // 时直接 return，muduo 下次 onMessage 时 buf 里已有新字节
-                if (buf->readableBytes() < static_cast<size_t>(content_length))
+                // dlmuduo Buffer 可能分包到达——ReadableBytes() < content_length
+                // 时直接 return，dlmuduo 下次 onMessage 时 buf 里已有新字节
+                if (buf->ReadableBytes() < static_cast<size_t>(content_length))
                     return; // 数据不完整，等下次
-                req.body.assign(buf->peek(), static_cast<size_t>(content_length));
-                buf->retrieve(content_length);
+                req.body.assign(buf->GetReadPtr(), static_cast<size_t>(content_length));
+                buf->MoveReadoffset(static_cast<uint64_t>(content_length));
             }
 
             // ---- 调用户回调，填充响应 ----
@@ -181,31 +185,30 @@ namespace lcz_gateway
             sendResponse(conn, resp);
         }
 
-        // 使用 muduo::net::Buffer 组装响应，复用 muduo 的 I/O 写路径。
+        // 使用 dlmuduo Buffer 组装响应，复用 dlmuduo 的 I/O 写路径。
         // 短连接模式：发完立刻 shutdown。
         // —— API 网关场景下，后端 RPC 调用已经占了连接（RpcClient 连接池），
         //    网关 HTTP 层再做 keep-alive 收益极小（同一客户端短时间内的后续请求
         //    仍需重新走鉴权/限流/路由，无法复用会话状态），徒增 TIME_WAIT 管理复杂度。
-        void sendResponse(const muduo::net::TcpConnectionPtr &conn,
-                          const HttpResp &resp)
+        void sendResponse(const PtrConnection &conn, const HttpResp &resp)
         {
-            muduo::net::Buffer buf;
+            Buffer buf;
 
-            buf.append("HTTP/1.1 " + std::to_string(resp.status) + " " +
-                       (resp.status_msg.empty() ? statusMsg(resp.status)
-                                                : resp.status_msg) +
-                       "\r\n");
+            buf.WritestringAndpush("HTTP/1.1 " + std::to_string(resp.status) + " " +
+                                   (resp.status_msg.empty() ? statusMsg(resp.status)
+                                                            : resp.status_msg) +
+                                   "\r\n");
 
             for (const auto &[k, v] : resp.headers)
-                buf.append(k + ": " + v + "\r\n");
+                buf.WritestringAndpush(k + ": " + v + "\r\n");
 
-            buf.append("Content-Length: " + std::to_string(resp.body.size()) + "\r\n");
-            buf.append("Connection: close\r\n");
-            buf.append("\r\n");
-            buf.append(resp.body);
+            buf.WritestringAndpush("Content-Length: " + std::to_string(resp.body.size()) + "\r\n");
+            buf.WritestringAndpush("Connection: close\r\n");
+            buf.WritestringAndpush("\r\n");
+            buf.WritestringAndpush(resp.body);
 
-            conn->send(&buf);
-            conn->shutdown();
+            conn->Send(buf.GetReadPtr(), buf.ReadableBytes());
+            conn->Shutdown();
         }
 
         static const char *statusMsg(int code)
@@ -231,7 +234,7 @@ namespace lcz_gateway
             }
         }
 
-        muduo::net::TcpServer _server;
+        TcpServer _server;
         Callback _cb;
     };
 

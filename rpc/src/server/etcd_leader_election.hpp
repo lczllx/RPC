@@ -1,7 +1,7 @@
 #pragma once
 #include "leader_election.hpp"
 #include "curl/curl.h"
-#include <muduo/net/TimerId.h>
+#include "CallbackTypes.hpp"
 #include <string>
 #include <mutex>
 #include <memory>
@@ -36,7 +36,7 @@ namespace lcz_rpc
             EtcdLeaderElector &operator=(const EtcdLeaderElector &) = delete;
 
             bool isLeader() const override;
-            void start(muduo::net::EventLoop *loop, LeadershipCallback cb = nullptr) override; // 注册 1s 定时器，启动选举
+            void start(EventLoop *loop, LeadershipCallback cb = nullptr) override; // 注册 1s 定时器，启动选举
             void stop() override;                                                              // 撤销 lease、清理状态
 
         private:
@@ -55,8 +55,8 @@ namespace lcz_rpc
             struct curl_slist *_headers; // HTTP 请求头
             std::mutex _curl_mutex;      // 保护 CURL*（libcurl 要求同一句柄禁止并发）
 
-            muduo::net::EventLoop *_loop;  // 选举定时器所在事件循环
-            muduo::net::TimerId _timer_id; // 选举定时器 ID
+            EventLoop *_loop;  // 选举定时器所在事件循环
+            TimerId _timer_id; // 选举定时器 ID
             LeadershipCallback _callback;  // leader/follower 身份变更时回调
 
             bool _is_leader;                                 // 当前是否持有 leader

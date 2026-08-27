@@ -92,7 +92,7 @@ namespace lcz_rpc
             ~ClientDiscover()
             {
                 if (_health_loop_ptr) {
-                    _health_loop_ptr->quit();
+                    _health_loop_ptr->Quit();
                 }
                 if (_client) {
                     _client->shutdown();
@@ -189,8 +189,8 @@ namespace lcz_rpc
             std::mutex _tracked_mutex;//方法集合互斥锁
 
             HeartbeatConfig _hb_config;//健康检查配置
-            muduo::net::EventLoopThread _health_loop;//健康检查线程
-            muduo::net::EventLoop* _health_loop_ptr = nullptr;//健康检查线程指针
+            EventLoopThread _health_loop;//健康检查线程
+            EventLoop* _health_loop_ptr = nullptr;//健康检查线程指针
         };
 
         // RPC 客户端类：支持直连或服务发现，提供同步/异步/回调三种 RPC 调用

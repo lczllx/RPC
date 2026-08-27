@@ -14,7 +14,7 @@ namespace lcz_rpc
             using ptr = std::shared_ptr<MemoryLeaderElector>;
 
             bool isLeader() const override { return true; }                     // 始终返回 true
-            void start(muduo::net::EventLoop *, LeadershipCallback) override {} // 无操作
+            void start(EventLoop *, LeadershipCallback) override {} // 无操作
             void stop() override {}                                             // 无操作
         };
 

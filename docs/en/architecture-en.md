@@ -16,7 +16,7 @@ Consumer
   -> CircuitBreaker（circuit check）
   -> ISerializer（serialize）
   -> LVProtocol framing
-  -> muduo TCP send
+  -> dlmuduo TCP send
   -> Provider unframe, deserialize
   -> TokenBucket（rate limiting）
   -> business handler
@@ -98,7 +98,7 @@ sequenceDiagram
     end
 ```
 
-A muduo timer is registered per `rid`. Timeout returns `TIMEOUT` first; a successful response cancels the timer. Late responses for the same `rid` are discarded to prevent double-processing.
+A dlmuduo timer is registered per `rid`. Timeout returns `TIMEOUT` first; a successful response cancels the timer. Late responses for the same `rid` are discarded to prevent double-processing.
 
 ---
 
@@ -126,7 +126,7 @@ Client Process                         Server Process
 ┌──────────────┐                    ┌──────────────┐
 │ serialize()  │  ① std::string     │ unserialize() │
 │   ↓          │                    │   ↑          │
-│ muduo Buffer │  ② memcpy          │ muduo Buffer │ ③ retrieveAsString
+│ dlmuduo Buffer │  ② memcpy          │ dlmuduo Buffer │ ③ retrieveAsString
 │   ↓          │                    │   ↑          │
 │ Socket send  │  ③ copy_from_user  │ Socket recv  │ ④ copy_to_user
 │   ↓          │    → sk_buff       │   ↑          │
@@ -203,9 +203,9 @@ Six forwarding strategies: `BROADCAST`, `ROUND_ROBIN`, `FANOUT`, `SOURCE_HASH`, 
 
 ### API Gateway
 
-A standalone process that shares muduo networking and the RpcClient call chain with the RPC server. It translates HTTP/JSON into LV-framed Proto, forwarding to backend RPC services while handling protocol adaptation, ingress rate limiting, circuit-breaking, and monitoring.
+A standalone process that shares dlmuduo networking and the RpcClient call chain with the RPC server. It translates HTTP/JSON into LV-framed Proto, forwarding to backend RPC services while handling protocol adaptation, ingress rate limiting, circuit-breaking, and monitoring.
 
-- **Networking**: reuses muduo `TcpServer` (EventLoop + IO thread pool). HTTP/1.1 parsing completes synchronously inside the IO thread callback.
+- **Networking**: reuses dlmuduo `TcpServer` (EventLoop + IO thread pool). HTTP/1.1 parsing completes synchronously inside the IO thread callback.
 - **Routing**: `HttpRouter` supports exact match (O(1) hash table) and prefix match (`/api/user/*`), same `unordered_map` pattern as `ProtoRpcRouter`.
 - **Protocol translation**: HTTP JSON body → `google::protobuf::util::JsonStringToMessage` → `RpcClient::call_proto` → Proto response → `MessageToJsonString` → HTTP JSON back.
 - **Governance reuse**: `RpcClient`'s built-in `CircuitBreaker`, timeout control, and BACKOFF retry are inherited without changes. An additional `TokenBucket` at the gateway entry returns HTTP 429 with a `Retry-After` header when the bucket is empty.
@@ -218,7 +218,7 @@ A standalone process that shares muduo networking and the RpcClient call chain w
 Built-in Prometheus text-format (0.0.4) endpoint covering the core of brpc's `/vars`. The design is "inline instrumentation in business threads + on-demand export in a dedicated thread":
 
 - **Instrumentation**: Counter/Gauge/Histogram are `std::atomic`-based (relaxed). Business threads bump values in place while handling requests — no collector thread, no queue. The Registry singleton lazily creates series on first use.
-- **Export**: a single `MetricsServer` thread (muduo EventLoop + Channel) listens on `:9090`; on scrape it reads atomic snapshots and renders text. `process_*` metrics (CPU/RSS/fds/threads/loadavg) are read from `/proc` at scrape time — zero cost when nobody scrapes.
+- **Export**: a single `MetricsServer` thread (dlmuduo EventLoop + Channel) listens on `:9090`; on scrape it reads atomic snapshots and renders text. `process_*` metrics (CPU/RSS/fds/threads/loadavg) are read from `/proc` at scrape time — zero cost when nobody scrapes.
 - **Coverage**: server-side `rpc_requests_total` / `rpc_request_duration_us` (histogram) / `rpc_concurrency` / `rpc_errors_total` / `rpc_connection_count`; client-side `rpc_client_*` (RTT/concurrency/errors); governance `circuit_breaker_state` / `token_bucket_available` / `rpc_rate_limited_total` / `registry_heartbeats_total`.
 - **Percentile strategy**: the process only stores raw histogram buckets; P99 is computed query-side via `histogram_quantile()` (same as official client libraries; brpc computes sliding-window percentiles in-process — a different trade-off).
 - **Convention details**: error counters are pre-registered at 0 on startup (distinguishing "zero errors" from "series absent"); monotonic gauges with a `_total` suffix export TYPE counter; 15-digit precision prevents large values degrading into scientific notation.

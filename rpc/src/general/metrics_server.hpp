@@ -1,18 +1,18 @@
 #pragma once
 // =============================================================================
-// metrics_server.hpp — 基于 muduo EventLoop 的 /metrics HTTP 端点
+// metrics_server.hpp — 基于 dlmuduo EventLoop 的 /metrics HTTP 端点
 // =============================================================================
 // 职责：起一个独立后台线程，监听 :9090，应答 Prometheus 的 scrape 请求
 // （即 curl http://localhost:9090/metrics），返回 Registry 里所有指标的文本快照。
 //
-// 为什么用 muduo EventLoop 而不是手写 while+accept：
+// 为什么用 dlmuduo EventLoop 而不是手写 while+accept：
 //   手写阻塞 accept() 在 stop() 时无法被唤醒，join() 会永久卡死
 //   （SHM server 的 CI 死锁就是这个问题，见 docs/shm-serialization-pitfalls.md）。
-//   muduo 的 loop.quit() 线程安全且能随时唤醒 loop()，退出干净。
+//   dlmuduo 的 Quit() 线程安全且能随时唤醒 Start()，退出干净。
 //
 // 线程模型：
-//   - start() 创建 1 个后台线程，线程内构造 EventLoop 并 loop()（muduo 要求
-//     EventLoop 构造与 loop() 在同一线程，所以不能在主线程构造再传进去）
+//   - start() 创建 1 个后台线程，线程内构造 EventLoop 并 Start()（dlmuduo 要求
+//     EventLoop 构造与 Start() 在同一线程，所以不能在主线程构造再传进去）
 //   - 与 RPC 数据面完全隔离：scrape 只读 Registry 里的 atomic，不碰业务线程
 //   - 进程内所有指标共享一个 Registry 单例，因此一个进程只需要一个 MetricsServer
 //
@@ -24,9 +24,8 @@
 #include "metrics.hpp"
 #include "metrics_hooks.hpp"
 #include "process_metrics.hpp"
-#include <muduo/net/EventLoop.h>
-#include <muduo/net/Channel.h>
-#include <muduo/net/InetAddress.h>
+#include "EventLoop.hpp"
+#include "Channel.hpp"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -54,12 +53,12 @@ namespace lcz_rpc
             }
 
             // 停止端点并回收线程
-            // quit() 是 muduo 提供的线程安全接口，会唤醒阻塞中的 loop()
+            // Quit() 是 dlmuduo 提供的线程安全接口，会唤醒阻塞中的 Start()
             static void stop()
             {
                 _running.store(false);
                 if (_loop)
-                    _loop->quit(); // 线程安全，唤醒 loop()
+                    _loop->Quit(); // 线程安全，唤醒 Start()
                 if (_thread.joinable())
                     _thread.join();
             }
@@ -68,9 +67,9 @@ namespace lcz_rpc
             // 后台线程主体：建监听 socket → 注册进 EventLoop → 事件循环应答 scrape
             static void serve(int port)
             {
-                // EventLoop 必须在本线程构造（muduo 线程亲和性要求）
+                // EventLoop 必须在本线程构造（dlmuduo 线程亲和性要求）
                 // 暴露给 stop() 用于跨线程 quit()
-                muduo::net::EventLoop loop;
+                EventLoop loop;
                 _loop = &loop;
 
                 // ---- 标准 socket 三件套：socket → bind → listen ----
@@ -103,11 +102,11 @@ namespace lcz_rpc
                     return;
                 }
 
-                // 把监听 fd 包成 muduo Channel 挂到 loop 上：
+                // 把监听 fd 包成 dlmuduo Channel 挂到 loop 上：
                 // 有新连接可读时（客户端 connect 完成）触发下面的回调，
                 // 平时线程阻塞在 epoll_wait 里，零 CPU 占用
-                muduo::net::Channel ch(&loop, fd);
-                ch.setReadCallback([&](muduo::Timestamp)
+                Channel ch(&loop, fd);
+                ch.SetReadCallback([&]()
                                    {
             // 一次 scrape 的完整应答流程（短连接：应答完立即 close）
             int cli = accept(fd, nullptr, nullptr);
@@ -144,15 +143,15 @@ namespace lcz_rpc
                 }
             }
             close(cli); });
-                ch.enableReading(); // 注册 EPOLLIN，开始接收连接
+                ch.EnableRead(); // 注册 EPOLLIN，开始接收连接
 
-                loop.loop(); // 阻塞在此，直到 stop() 调用 quit()
+                loop.Start(); // 阻塞在此，直到 stop() 调用 Quit()
                 close(fd);   // loop 退出后清理监听 fd
             }
 
             inline static std::thread _thread;              // 后台服务线程
             inline static std::atomic<bool> _running{false}; // 防重复 start 的标志
-            inline static muduo::net::EventLoop *_loop = nullptr; // 供 stop() 跨线程 quit
+            inline static EventLoop *_loop = nullptr; // 供 stop() 跨线程 Quit
         };
 
     } // namespace metrics

@@ -4,9 +4,9 @@
 
 [中文](README.zh-CN.md)
 
-> A lightweight C++20 RPC framework built on muduo + Protobuf. Dual TCP / shared-memory zero-copy transport, etcd registry, circuit breaker, token bucket, distributed tracing, Prometheus metrics, and an HTTP-to-RPC API gateway — all in one repo.
+> A lightweight C++20 RPC framework built on dlmuduo + Protobuf. Dual TCP / shared-memory zero-copy transport, etcd registry, circuit breaker, token bucket, distributed tracing, Prometheus metrics, and an HTTP-to-RPC API gateway — all in one repo.
 
-Author: lczllx · Language: C++20 · Network: muduo · Transport: TCP & SHM zero-copy · Serialization: Protobuf, JSON, FlatBuffers · Build: CMake
+Author: lczllx · Language: C++20 · Network: dlmuduo · Transport: TCP & SHM zero-copy · Serialization: Protobuf, JSON, FlatBuffers · Build: CMake
 
 ## Highlights
 
@@ -15,9 +15,9 @@ Author: lczllx · Language: C++20 · Network: muduo · Transport: TCP & SHM zero
 - **Call models**: synchronous, `std::future` async, and callback-based
 - **Pluggable serialization**: `ISerializer` abstraction, default Protobuf, JSON for debugging, FlatBuffers for zero-copy reads
 - **Distributed tracing**: `trace_id` + `span_id` end-to-end propagation
-- **Multi-client concurrency**: SHM path with muduo `EventLoopThread` worker pool, per-client independent ring buffers
+- **Multi-client concurrency**: SHM path with dlmuduo `EventLoopThread` worker pool, per-client independent ring buffers
 - **Observability**: built-in Prometheus `/metrics` endpoint (text format 0.0.4), covering request count / latency histogram / concurrency / error count / connection count / circuit breaker state / token bucket / process-level metrics — mirrors brpc `/vars`
-- **API Gateway**: HTTP→RPC gateway on the same muduo foundation, with route matching, rate limiting, circuit breaker, Prometheus metrics, and distributed tracing — deployed as a separate process, zero changes to the RPC framework
+- **API Gateway**: HTTP→RPC gateway on the same dlmuduo foundation, with route matching, rate limiting, circuit breaker, Prometheus metrics, and distributed tracing — deployed as a separate process, zero changes to the RPC framework
 
 ## Performance: lyqtRpc vs brpc
 
@@ -116,7 +116,7 @@ Provider ──REGISTER/HEARTBEAT──> Registry(etcd) <──DISCOVER── Co
 - **Registry backend**: `LCZ_ETCD` env var switches between Memory / Etcd; defaults to in-memory
 - **Circuit breaker**: three-state (CLOSED→OPEN→HALF_OPEN), method×host granularity, memory/etcd persistence
 - **Rate limiter**: `TokenBucket` + `BACKOFF` automatic backoff and retry
-- **Thread pool**: muduo `EventLoopThread`, per-client ring buffer, lock-free SPSC
+- **Thread pool**: dlmuduo `EventLoopThread`, per-client ring buffer, lock-free SPSC
 
 > See [docs/en/architecture-en.md](docs/en/architecture-en.md) for detailed flowcharts.
 
@@ -132,7 +132,7 @@ lyqtRpc/
 │   ├── tests/                # 76 GTest cases
 │   ├── example/              # Examples + benchmarks
 │   ├── proto/                # Protobuf definitions
-│   └── muduo/                # Git submodule
+│   └── muduo/                # dlmuduo network lib (Git submodule)
 ├── gateway/
 │   ├── src/                  # HttpServer, HttpRouter, GatewayHandler, DiagnoseHandler
 │   └── example/              # gateway_server entry point

@@ -14,7 +14,7 @@ graph TD
         Call --> CB[CircuitBreaker]
         Req --> SerC[ISerializer]
         SerC --> LV[LVProtocol 封包]
-        LV --> TCP1[muduo TCP]
+        LV --> TCP1[dlmuduo TCP]
     end
 
     subgraph Registry
@@ -48,7 +48,7 @@ Consumer
   -> CircuitBreaker（熔断检查）
   -> ISerializer（序列化）
   -> LV 帧封包
-  -> muduo 发 TCP
+  -> dlmuduo 发 TCP
   -> Provider 拆包、反序列化
   -> TokenBucket（流控）
   -> 业务 Handler
@@ -138,7 +138,7 @@ sequenceDiagram
     end
 ```
 
-按 `rid` 注册 muduo 定时器，超时先返回 `TIMEOUT`，响应先到达则取消定时器。同一个 `rid` 不会同时超时和成功。
+按 `rid` 注册 dlmuduo 定时器，超时先返回 `TIMEOUT`，响应先到达则取消定时器。同一个 `rid` 不会同时超时和成功。
 
 ![客户端超时控制](../flowchat/flow-timeout.png)
 
@@ -168,7 +168,7 @@ Client 进程                           Server 进程
 ┌──────────────┐                    ┌──────────────┐
 │ serialize()  │  ① std::string     │ unserialize() │
 │   ↓          │                    │   ↑          │
-│ muduo Buffer │  ② memcpy          │ muduo Buffer │ ③ retrieveAsString
+│ dlmuduo Buffer │  ② memcpy          │ dlmuduo Buffer │ ③ retrieveAsString
 │   ↓          │                    │   ↑          │
 │ Socket send  │  ③ copy_from_user  │ Socket recv  │ ④ copy_to_user
 │   ↓          │    → sk_buff       │   ↑          │
@@ -245,9 +245,9 @@ Provider 端 `TokenBucket` 固定速率生成令牌。超限返回 `BACKOFF` + `
 
 ### API 网关
 
-独立进程，与 RPC Server 共用 muduo 网络库和 RpcClient 调用链。将 HTTP/JSON 请求翻译为 LV 帧 Proto 协议后转发到后端 RPC 服务，承担协议适配、入口限流、熔断代理和监控职责。
+独立进程，与 RPC Server 共用 dlmuduo 网络库和 RpcClient 调用链。将 HTTP/JSON 请求翻译为 LV 帧 Proto 协议后转发到后端 RPC 服务，承担协议适配、入口限流、熔断代理和监控职责。
 
-- **网络层**：复用 muduo `TcpServer`（EventLoop + IO 线程池），HTTP/1.1 解析在 IO 线程回调内同步完成
+- **网络层**：复用 dlmuduo `TcpServer`（EventLoop + IO 线程池），HTTP/1.1 解析在 IO 线程回调内同步完成
 - **路由**：`HttpRouter` 支持精确匹配（O(1) 哈希）和前缀匹配（`/api/user/*`），与 `ProtoRpcRouter` 同款 `unordered_map` 设计
 - **协议转换**：HTTP JSON body → `google::protobuf::util::JsonStringToMessage` → `RpcClient::call_proto` → Proto response → `MessageToJsonString` → HTTP JSON 返回
 - **治理复用**：`RpcClient` 内部自带的 `CircuitBreaker`、超时控制、BACKOFF 退避全部零改动继承；网关入口额外挂 `TokenBucket`，桶空返回 HTTP 429 + `Retry-After` 头
@@ -260,7 +260,7 @@ Provider 端 `TokenBucket` 固定速率生成令牌。超限返回 `BACKOFF` + `
 内建 Prometheus 文本协议（0.0.4）端点，对标 brpc `/vars` 核心项。设计为"业务线程内联埋点 + 独立线程按需导出"：
 
 - **埋点**：Counter/Gauge/Histogram 全部基于 `std::atomic`（relaxed），业务线程处理请求时就地 `+1`，无采集线程、无队列；Registry 单例懒注册，首次使用自动创建序列
-- **导出**：`MetricsServer` 单线程（muduo EventLoop + Channel）监听 `:9090`，scrape 时读取原子快照拼文本返回；`process_*` 进程级指标（CPU/RSS/fd/线程数/负载）在 scrape 时现读 `/proc`，无人拉取零开销
+- **导出**：`MetricsServer` 单线程（dlmuduo EventLoop + Channel）监听 `:9090`，scrape 时读取原子快照拼文本返回；`process_*` 进程级指标（CPU/RSS/fd/线程数/负载）在 scrape 时现读 `/proc`，无人拉取零开销
 - **指标覆盖**：服务端 `rpc_requests_total`/`rpc_request_duration_us`（直方图）/`rpc_concurrency`/`rpc_errors_total`/`rpc_connection_count`，客户端 `rpc_client_*`（RTT/并发/错误），治理组件 `circuit_breaker_state`/`token_bucket_available`/`rpc_rate_limited_total`/`registry_heartbeats_total`
 - **分位数策略**：进程内只存直方图原始桶，P99 由查询侧 `histogram_quantile()` 计算（与官方 client 库一致；brpc 为进程内滑动窗口计算，是两种取舍）
 - **约定细节**：错误计数启动即预注册为 0（区分"零错误"与"序列不存在"）；`_total` 后缀的单调 Gauge 导出 TYPE 修正为 counter；导出 15 位精度避免大数退化为科学计数法

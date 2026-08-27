@@ -4,11 +4,11 @@
 # 仓库布局（根目录即本文件所在仓库根）：
 #   RPC/
 #     README.md, autobuild/, .gitmodules
-#     rpc/          ← CMake 工程根（muduo 子模块在 rpc/muduo）
+#     rpc/          ← CMake 工程根（dlmuduo 子模块在 rpc/muduo）
 #     .github/workflows/ci.yml
 #
 # 流程要点：
-#   1. checkout + submodules:recursive — 拉取 chenshuo/muduo
+#   1. checkout + submodules:recursive — 拉取 lczllx/dlmuduo
 #   2. apt 安装依赖（与 README 一致，含 libgtest-dev + libflatbuffers-dev）
 #   3. 在 rpc/build 全量编译：examples（含 SHM Proto ZC）+ 单元测试
 #   4. 运行 lcz_rpc_unit_tests
@@ -56,7 +56,7 @@ jobs:
         with:
           submodules: recursive
 
-      # muduo 依赖 Boost（CMake: find_package(Boost REQUIRED)），仅装 json/protobuf 不够，缺了会卡在 Configure
+      # 宿主 etcd 存储的 base64 编解码依赖 Boost（boost::archive::iterators，头文件库），仅装 json/protobuf 不够
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -75,8 +75,8 @@ jobs:
             flatbuffers-compiler \
             libgtest-dev
 
-      # 提前失败并给出可读提示：仓库根是否含 rpc/、muduo 子模块是否拉下
-      - name: Verify repo layout and muduo submodule
+      # 提前失败并给出可读提示：仓库根是否含 rpc/、dlmuduo 子模块是否拉下
+      - name: Verify repo layout and dlmuduo submodule
         run: |
           if [ ! -f rpc/CMakeLists.txt ]; then
             echo "::error title=路径不对::仓库根下没有 rpc/CMakeLists.txt。若 GitHub 上只有 rpc 目录内容、没有外层 rpc 文件夹，请把 ci.yml 里的 working-directory: rpc 改为在仓库根执行 cmake。"
@@ -93,7 +93,7 @@ jobs:
         working-directory: rpc
         run: cmake --preset system -B build -DLCZ_RPC_BUILD_TESTS=ON -DLCZ_RPC_BUILD_EXAMPLES=ON
 
-      # 全量编译：muduo + proto + 所有 example + 单元测试
+      # 全量编译：dlmuduo + proto + 所有 example + 单元测试
       - name: Build entire RPC project
         working-directory: rpc/build
         run: cmake --build . -j$(nproc)
