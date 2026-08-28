@@ -2,11 +2,13 @@
 #include "requestor.hpp"
 #include <algorithm>
 #include <random>
-#include <chrono> 
+#include <chrono>
+#include <map>
 #include "general/publicconfig.hpp"
 #include "general/log_system/lcz_log.h"
 
 static constexpr int MAX_IDX = 1000000000; // 轮询索引上限（10亿），防止无界增长溢出
+static constexpr int VIRTUAL_NODES = 160;  // 一致性哈希：每个物理节点的虚拟节点数（Dubbo 同款默认）
 
 namespace lcz_rpc
 {
@@ -31,6 +33,7 @@ namespace lcz_rpc
                     return;
                 }
                 _host.emplace_back(HostDetail{host,load});
+                rebuildRing();
             }
             // 按指定策略从主机列表中选一个
             HostDetail selectHost(LoadBalanceStrategy strategy, const std::string &key = {})
@@ -47,6 +50,8 @@ namespace lcz_rpc
                         return pickSourceHash(key);
                     case LoadBalanceStrategy::LOWEST_LOAD:
                         return pickLowestLoad();
+                    case LoadBalanceStrategy::CONSISTENT_HASH:
+                        return pickConsistentHash(key);
                 }
                 return HostDetail();//如果策略不合法，则返回空
             }
@@ -103,6 +108,29 @@ namespace lcz_rpc
                 auto pos=candidates[cur_pos%candidates.size()];
                 return _host[pos];
             }
+            // 一致性哈希选择：key 哈希后顺时针在哈希环上找第一个虚拟节点
+            HostDetail pickConsistentHash(const std::string &key)
+            {
+                if (key.empty()) return pickRandom(); // 无 key 退化成随机（与 SOURCE_HASH 一致）
+                if (_ring.empty()) return HostDetail();
+                size_t hash_val = _hash(key);
+                auto it = _ring.lower_bound(hash_val); // 顺时针找第一个 >= hash 的虚拟节点
+                if (it == _ring.end()) it = _ring.begin(); // 越过环尾回绕到起点
+                return _host[it->second];
+            }
+            // 重建哈希环（调用方必须已持有 _mutex）
+            void rebuildRing()
+            {
+                _ring.clear();
+                for (size_t i = 0; i < _host.size(); ++i)
+                {
+                    std::string hk = hostKey(_host[i].host);
+                    for (int v = 0; v < VIRTUAL_NODES; ++v)
+                    {
+                        _ring[_hash(hk + "#" + std::to_string(v))] = i;
+                    }
+                }
+            }
             // 移除指定主机
             void removeHost(const HostInfo &host)
             {
@@ -116,6 +144,7 @@ namespace lcz_rpc
                 if (it != _host.end())
                 {
                     _host.erase(it);
+                    rebuildRing();
                 }
             }
             // 默认轮询获取一个主机
@@ -139,6 +168,7 @@ namespace lcz_rpc
             std::mutex _mutex;
             uint64_t _idx;//轮询索引 类型uint64_t防止溢出
             std::vector<HostDetail> _host;
+            std::map<size_t, size_t> _ring;//一致性哈希环: hash(虚拟节点) -> _host 下标
             std::mt19937 _rng;//随机数生成器
             std::hash<std::string> _hash;//hash函数
             //std::uniform_int_distribution<size_t> _dist;//随机数分布
@@ -294,7 +324,8 @@ namespace lcz_rpc
                                  const std::string &method,
                                  HostDetail &detail,
                                  LoadBalanceStrategy strategy,
-                                 bool force_remote = false)
+                                 bool force_remote = false,
+                                 const std::string &key = {})
             {
                 if (!force_remote)
                 {
@@ -302,7 +333,7 @@ namespace lcz_rpc
                     auto it = _method_host.find(method);
                     if (it != _method_host.end())
                     {
-                        detail = it->second->selectHost(strategy);
+                        detail = it->second->selectHost(strategy, key);
                         LCZ_INFO("[discover-cache] method=%s strategy=%d host=%s:%d load=%d",
                             method.c_str(),
                             static_cast<int>(strategy),
@@ -344,7 +375,7 @@ namespace lcz_rpc
                  for (const auto &detail : details) {
                      method_host->appendHost(detail.host, detail.load);
                  }
-                 detail=method_host->selectHost(strategy);
+                 detail=method_host->selectHost(strategy, key);
                  _method_host[method]=method_host; // 缓存新获取的主机列表以供后续复用
                  LCZ_INFO("[discover-cache] method=%s host=%s:%d load=%d",
                     method.c_str(),

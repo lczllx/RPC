@@ -131,10 +131,11 @@ namespace lcz_rpc
     // 负载均衡类型定义
     enum class LoadBalanceStrategy
     {
-        ROUND_ROBIN, // 轮询
-        RANDOM,      // 随机
-        SOURCE_HASH, // 源地址hash
-        LOWEST_LOAD  // 最低负载
+        ROUND_ROBIN,     // 轮询
+        RANDOM,          // 随机
+        SOURCE_HASH,     // 源地址hash
+        LOWEST_LOAD,     // 最低负载
+        CONSISTENT_HASH  // 一致性哈希：同 key 稳定命中同一主机，增删主机只重映射 ~1/N
     }; // 负载均衡类型
 
     enum class SerializationMethod

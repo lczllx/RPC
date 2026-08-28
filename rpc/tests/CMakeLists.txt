@@ -24,6 +24,7 @@
 #   test_dispacher.cc              按 MsgType 派发到类型化 handler，未知类型关连接
 #   test_rpc_router.cc             ServiceDescribe/Factory/Manager + JSON/Proto 路由派发
 #   test_rpc_registry.cc           DiscoverManager 通知 + PwithDManager 注册/发现/负载/心跳
+#   test_load_balance.cc           MethodHost 一致性哈希：确定性/分布/增删节点最小重映射
 #   test_leader_election.cc        内存模式单实例恒为 leader，start/stop 无副作用
 # =============================================================================
 find_package(GTest REQUIRED CONFIG)
@@ -47,6 +48,7 @@ add_executable(lcz_rpc_unit_tests
   test_dispacher.cc
   test_rpc_router.cc
   test_rpc_registry.cc
+  test_load_balance.cc
   test_leader_election.cc
 )
 

@@ -140,7 +140,7 @@ namespace lcz_rpc
             }
 
             // 发现服务，返回主机详情（支持负载均衡），结果写入 detail_bylast
-            bool serviceDiscover(const std::string &method, HostDetail &detail_bylast,LoadBalanceStrategy strategy) {
+            bool serviceDiscover(const std::string &method, HostDetail &detail_bylast,LoadBalanceStrategy strategy, const std::string &key = {}) {
                 HostDetail detail;
                 auto conn = _client->connection();
                 if(conn.get() == nullptr || conn->connected() == false)
@@ -148,7 +148,7 @@ namespace lcz_rpc
                     LCZ_ERROR("连接获取失败,无法发现服务:%s", method.c_str());
                     return false;
                 }
-                if (_discover->serviceDiscover(conn, method, detail,strategy)) {
+                if (_discover->serviceDiscover(conn, method, detail,strategy, false, key)) {
                     detail_bylast = detail;
                     {
                         std::unique_lock<std::mutex> lock(_tracked_mutex);
@@ -162,7 +162,7 @@ namespace lcz_rpc
             // 注入序列化器到内部客户端
             void setSerializer(std::shared_ptr<ISerializer> s) { if (_client) _client->setSerializer(s); }
             // 发现服务，返回主机信息（支持负载均衡）
-            bool serviceDiscover(const std::string &method, HostInfo &host,LoadBalanceStrategy strategy) {
+            bool serviceDiscover(const std::string &method, HostInfo &host,LoadBalanceStrategy strategy, const std::string &key = {}) {
                 HostDetail detail;
                 auto conn = _client->connection();
                 if(conn.get() == nullptr || conn->connected() == false)
@@ -170,7 +170,7 @@ namespace lcz_rpc
                     LCZ_ERROR("连接获取失败,无法发现服务:%s", method.c_str());
                     return false;
                 }
-                if (_discover->serviceDiscover(conn, method, detail,strategy)) {
+                if (_discover->serviceDiscover(conn, method, detail,strategy, false, key)) {
                     host = detail.host;
                     {
                         std::unique_lock<std::mutex> lock(_tracked_mutex);
@@ -242,47 +242,72 @@ namespace lcz_rpc
                 _loadbalance_strategy = strategy;
             }
             // 同步 RPC 调用
-            [[nodiscard]] bool call(const std::string &method_name, const Json::Value &params, Json::Value &result)
+            [[nodiscard]] bool call(const std::string &method_name, const Json::Value &params, Json::Value &result, const std::string &key = {})
             {
-                BaseClient::ptr client = getClient(method_name);
+                BaseClient::ptr client = getClient(method_name, key);
                 if (client.get() == nullptr)
                 {
                     LCZ_ERROR("服务获取失败：%s", method_name.c_str());
                     return false;
                 }
-                return _caller->call(client->connection(), method_name, params, result);
+                auto conn = client->connection();
+                if (!conn)
+                {
+                    LCZ_ERROR("连接已断开，服务调用失败：%s", method_name.c_str());
+                    return false;
+                }
+                return _caller->call(conn, method_name, params, result);
             }
             // 异步 RPC 调用，通过 future 获取结果
-            [[nodiscard]] bool call(const std::string &method_name, Json::Value &params, RpcCaller::RpcAsyncRespose &result)
+            [[nodiscard]] bool call(const std::string &method_name, Json::Value &params, RpcCaller::RpcAsyncRespose &result, const std::string &key = {})
             {
-                BaseClient::ptr client = getClient(method_name);
+                BaseClient::ptr client = getClient(method_name, key);
                 if (client.get() == nullptr)
                 {
                     LCZ_ERROR("服务获取失败：%s", method_name.c_str());
                     return false;
                 }
-                return _caller->call(client->connection(), method_name, params, result);
+                auto conn = client->connection();
+                if (!conn)
+                {
+                    LCZ_ERROR("连接已断开，服务调用失败：%s", method_name.c_str());
+                    return false;
+                }
+                return _caller->call(conn, method_name, params, result);
             }
             // 回调式 RPC 调用
-            [[nodiscard]] bool call(const std::string &method_name, Json::Value &params, const RpcCaller::ResponseCallback &cb)
+            [[nodiscard]] bool call(const std::string &method_name, Json::Value &params, const RpcCaller::ResponseCallback &cb, const std::string &key = {})
             {
-                BaseClient::ptr client = getClient(method_name);
+                BaseClient::ptr client = getClient(method_name, key);
                 if (client.get() == nullptr)
                 {
                     LCZ_ERROR("服务获取失败：%s", method_name.c_str());
                     return false;
                 }
-                return _caller->call(client->connection(), method_name, params, cb);
+                auto conn = client->connection();
+                if (!conn)
+                {
+                    LCZ_ERROR("连接已断开，服务调用失败：%s", method_name.c_str());
+                    return false;
+                }
+                return _caller->call(conn, method_name, params, cb);
             }
             // 纯 Proto RPC 调用（含 Prometheus 客户端指标）
             template<ProtoMessage Req, ProtoMessage Resp>
             [[nodiscard]] bool call_proto(const std::string &method_name, const Req &req, Resp *resp,
-                           std::chrono::milliseconds timeout = std::chrono::seconds(5))
+                           std::chrono::milliseconds timeout = std::chrono::seconds(5),
+                           const std::string &key = {})
             {
-                BaseClient::ptr client = getClient(method_name);
+                BaseClient::ptr client = getClient(method_name, key);
                 if (client.get() == nullptr)
                 {
                     LCZ_ERROR("服务获取失败：%s", method_name.c_str());
+                    return false;
+                }
+                auto conn = client->connection();
+                if (!conn)
+                {
+                    LCZ_ERROR("连接已断开，服务调用失败：%s", method_name.c_str());
                     return false;
                 }
                 // ---- Prometheus 客户端指标埋点 ----
@@ -293,7 +318,7 @@ namespace lcz_rpc
                 auto t1 = std::chrono::steady_clock::now();
                 lcz_rpc::metrics::MetricHooks::onClientSend(method_name);
                 std::string error_code;
-                bool ok = _caller->call_proto(client->connection(), method_name, req, resp, timeout, &error_code);
+                bool ok = _caller->call_proto(conn, method_name, req, resp, timeout, &error_code);
                 auto t2 = std::chrono::steady_clock::now();
                 double lat = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
                 lcz_rpc::metrics::MetricHooks::onClientRecv(method_name, lat, error_code);
@@ -331,27 +356,49 @@ namespace lcz_rpc
                 _rpc_clients.erase(host);
                 _breaker->removeHost(hostKey(host));
             }
-            // 创建新连接并加入连接池
+            // 创建新连接（阻塞建连）并原子插入连接池。
+            // 双重检查：connect 阻塞期间可能有别的线程已抢先为该 host 建好连接，
+            // 此时关闭本次冗余连接并复用已有连接，避免互相覆盖导致正在使用的连接被析构。
             BaseClient::ptr newClient(const HostInfo &host)
             {
-                BaseClient::ptr client;
                 auto msg_cb = std::bind(&Dispacher::onMessage, _dispacher.get(), std::placeholders::_1, std::placeholders::_2);
-                client = lcz_rpc::ClientFactory::create(host.first, host.second);
+                BaseClient::ptr client = lcz_rpc::ClientFactory::create(host.first, host.second);
                 client->setMessageCallback(msg_cb);
                 // client->setConnectionCallback(onConnection);
                 client->connect();
-                putClient(host, client);
+
+                BaseClient::ptr existing;
+                bool redundant = false;
+                {
+                    std::unique_lock<std::mutex> lock(_mutex);
+                    auto it = _rpc_clients.find(host);
+                    if (it != _rpc_clients.end())
+                    {
+                        redundant = true;
+                        existing = it->second;
+                    }
+                    else
+                    {
+                        _rpc_clients[host] = client;
+                    }
+                }
+                if (redundant)
+                {
+                    // 锁外关闭冗余连接（shutdown 内含 sleep，避免阻塞其他线程）
+                    client->shutdown();
+                    return existing;
+                }
                 return client;
             }
             // 根据 method 获取或创建对应的 RPC 客户端（支持服务发现）
-            BaseClient::ptr getClient(const std::string &method)
+            BaseClient::ptr getClient(const std::string &method, const std::string &key = {})
             {
                 BaseClient::ptr client;
                 if (_enablediscover)
                 {
                     HostDetail detail;
-                    // 先通过服务发现获取提供者的地址信息
-                    bool ret = _discover_client->serviceDiscover(method, detail,_loadbalance_strategy);
+                    // 先通过服务发现获取提供者的地址信息（key 供 SOURCE_HASH/CONSISTENT_HASH 路由）
+                    bool ret = _discover_client->serviceDiscover(method, detail,_loadbalance_strategy, key);
                     if (!ret)
                     {
                         LCZ_ERROR("服务发现失败");
