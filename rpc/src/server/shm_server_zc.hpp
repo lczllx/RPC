@@ -245,6 +245,7 @@ namespace lcz_rpc
                             json_req->setId(ShmZcReader::strval(req->id()));
                             json_req->setMethod(ShmZcReader::strval(req->method()));
                             json_req->setTraceId(ShmZcReader::strval(req->trace_id()));
+                            json_req->setSpanId(ShmZcReader::strval(req->span_id()));
                             json_req->setMsgType(MsgType::REQ_RPC);
                             if (req->params() && req->params()->size() > 0)
                             {

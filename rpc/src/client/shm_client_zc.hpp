@@ -85,11 +85,12 @@ namespace lcz_rpc
             auto id = builder.CreateString(req->rid());
             auto method = builder.CreateString(req->method());
             auto trace_id = builder.CreateString(req->trace_id());
+            auto span_id = builder.CreateString(req->span_id());
             std::string params_json;
             JSON::serialize(req->params(), params_json);
             auto params_vec = builder.CreateVector(
                 reinterpret_cast<const uint8_t *>(params_json.data()), params_json.size());
-            auto root = fb::CreateRpcRequest(builder, id, method, trace_id, params_vec);
+            auto root = fb::CreateRpcRequest(builder, id, method, trace_id, span_id, params_vec);
             builder.Finish(root);
 
             std::string body(reinterpret_cast<const char *>(builder.GetBufferPointer()),

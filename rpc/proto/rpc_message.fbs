@@ -12,6 +12,7 @@ table RpcRequest {
     id:       string;    // 请求 ID（= BaseMessage::_rid，零拷贝读写保留跨进程标识）
     method:   string;    // 方法名
     trace_id: string;    // 分布式追踪 ID
+    span_id:  string;    // 当前调用跨度 ID（客户端根 span）
     params:   [ubyte];   // 参数载荷（FlatBuffers 子消息或 JSON 字符串）
 }
 

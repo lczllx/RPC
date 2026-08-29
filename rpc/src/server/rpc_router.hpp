@@ -7,6 +7,7 @@
 #include "general/log_system/lcz_log.h"
 #include "general/rate_limiter.hpp"
 #include <google/protobuf/message_lite.h>
+#include <chrono>
 
 /*服务端对rpc请求的处理
 1. 接收RPC请求 → 2. 根据method名查找服务 → 3. 参数校验
@@ -157,6 +158,28 @@ namespace lcz_rpc{
             std::mutex _mutex;
             std::unordered_map<std::string,ServiceDescribe::ptr> _services;
         };
+        // 服务端 span：进入时生成子 span 并打进入日志，离开（任意 return 路径）时打印耗时
+        // 链式关系：parent = 收到的 span_id（上游），span = 本跳 uuid（供下游作 parent）
+        struct ServerSpan
+        {
+            std::string trace_id, parent_span, span, method;
+            std::chrono::steady_clock::time_point start;
+            ServerSpan(std::string t, std::string p, std::string m)
+                : trace_id(std::move(t)), parent_span(std::move(p)), span(uuid()),
+                  method(std::move(m)), start(std::chrono::steady_clock::now())
+            {
+                LCZ_INFO("[trace_id=%s parent=%s span=%s] recv method=%s",
+                         trace_id.c_str(), parent_span.c_str(), span.c_str(), method.c_str());
+            }
+            ~ServerSpan()
+            {
+                auto dur = std::chrono::duration_cast<std::chrono::microseconds>(
+                               std::chrono::steady_clock::now() - start).count();
+                LCZ_INFO("[trace_id=%s parent=%s span=%s] done method=%s dur=%lldus",
+                         trace_id.c_str(), parent_span.c_str(), span.c_str(), method.c_str(),
+                         static_cast<long long>(dur));
+            }
+        };
         // RPC 路由器类：接收 RPC 请求，派发到对应的 ServiceDescribe 处理
         class RpcRouter
         {
@@ -183,6 +206,8 @@ namespace lcz_rpc{
                     return;
                 }
                 LCZ_DEBUG("RpcRouter recv method=%s", req->method().c_str());
+                // 生成子 span：parent = 收到的 span_id，本跳 span = 新 uuid；离开函数自动打印耗时
+                ServerSpan span(req->trace_id(), req->span_id(), req->method());
                 auto service=_manager->select(req->method());
                 if(service.get()==nullptr)
                 {
@@ -245,8 +270,8 @@ namespace lcz_rpc{
                 const std::string& method = req->method();
                 const std::string& body = req->body();
                 const std::string& req_id = req->rid();
-                LCZ_INFO("[trace_id=%s span=%s] ProtoRpcRouter recv method=%s",
-                         req->trace_id().c_str(), req->span_id().c_str(), method.c_str());
+                // 生成子 span：parent = 收到的 span_id，本跳 span = 新 uuid；离开函数自动打印耗时
+                ServerSpan span(req->trace_id(), req->span_id(), method);
                 auto it = _handlers.find(method);
                 if (it == _handlers.end()) {
                     LCZ_ERROR("Proto method not found: %s", method.c_str());

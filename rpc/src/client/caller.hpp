@@ -43,6 +43,8 @@ namespace lcz_rpc
                 req_msg->setMsgType(MsgType::REQ_RPC);
                 req_msg->setMethod(method_name);
                 req_msg->setParams(params);
+                req_msg->setTraceId(uuid()); // 分布式追踪：根 trace_id
+                req_msg->setSpanId(uuid());  // 根 span：当前调用跨度 ID（真实 uuid，非占位）
                 BaseMessage::ptr resp_msg;
                 bool ret = _requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(req_msg), resp_msg, timeout);
                 if (!ret)
@@ -95,6 +97,8 @@ namespace lcz_rpc
                 req_msg->setMsgType(MsgType::REQ_RPC);
                 req_msg->setMethod(method_name);
                 req_msg->setParams(params);
+                req_msg->setTraceId(uuid()); // 分布式追踪：根 trace_id
+                req_msg->setSpanId(uuid());  // 根 span：当前调用跨度 ID（真实 uuid，非占位）
                 BaseMessage::ptr resp_msg;
 
                 auto json_pomise = std::make_shared<std::promise<Json::Value>>(); // 防止作用域结束销毁
@@ -129,6 +133,8 @@ namespace lcz_rpc
                 req_msg->setMsgType(MsgType::REQ_RPC);
                 req_msg->setMethod(method_name);
                 req_msg->setParams(params);
+                req_msg->setTraceId(uuid()); // 分布式追踪：根 trace_id
+                req_msg->setSpanId(uuid());  // 根 span：当前调用跨度 ID（真实 uuid，非占位）
                 BaseMessage::ptr resp_msg;
 
                 Requestor::ReqCallback reqcb = std::bind(&RpcCaller::callBackself, this, cb,method_name,host, std::placeholders::_1);
@@ -215,8 +221,8 @@ namespace lcz_rpc
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC_PROTO);
                 req_msg->setMethod(method_name);
-                req_msg->setTraceId(uuid()); // 分布式追踪：生成 trace_id
-                req_msg->setSpanId("0");
+                req_msg->setTraceId(uuid()); // 分布式追踪：生成根 trace_id
+                req_msg->setSpanId(uuid());  // 根 span：当前调用跨度 ID（真实 uuid，非占位）
                 std::string body;
                 if (!req.SerializeToString(&body))
                 {
@@ -258,7 +264,7 @@ namespace lcz_rpc
                     retry_req->setMethod(method_name);
                     retry_req->setBody(body); // 复用已序列化的 body
                     retry_req->setTraceId(req_msg->trace_id()); // 复用原始 trace_id
-                    retry_req->setSpanId("1"); // 重试标记
+                    retry_req->setSpanId(req_msg->span_id());   // 复用同一 span，重试不另起跨度
                     BaseMessage::ptr retry_resp;
                     if (!_requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(retry_req), retry_resp, timeout))
                     {
@@ -320,6 +326,8 @@ namespace lcz_rpc
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC_PROTO);
                 req_msg->setMethod(method_name);
+                req_msg->setTraceId(uuid()); // 分布式追踪：生成根 trace_id
+                req_msg->setSpanId(uuid());  // 根 span：当前调用跨度 ID（真实 uuid，非占位）
                 std::string body;
                 if (!req.SerializeToString(&body))
                 {
@@ -383,6 +391,8 @@ namespace lcz_rpc
                 req_msg->setId(uuid());
                 req_msg->setMsgType(MsgType::REQ_RPC_PROTO);
                 req_msg->setMethod(method_name);
+                req_msg->setTraceId(uuid()); // 分布式追踪：生成根 trace_id
+                req_msg->setSpanId(uuid());  // 根 span：当前调用跨度 ID（真实 uuid，非占位）
                 std::string body;
                 if (!req.SerializeToString(&body))
                 {

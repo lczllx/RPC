@@ -45,7 +45,7 @@ int main() {
         req->setMsgType(lcz_rpc::MsgType::REQ_RPC);
         req->setMethod("add");
         req->setTraceId(uuid());
-        req->setSpanId("0");
+        req->setSpanId(uuid());
         Json::Value params;
         params["num1"] = i * 10;
         params["num2"] = i;
