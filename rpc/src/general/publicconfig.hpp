@@ -49,4 +49,29 @@ namespace lcz_rpc
         int open_duration_sec = 30; // OPEN 持续多久 → HALF_OPEN
         int half_open_max_req = 1;  // 半开最多放几条探测
     };
+    // RPC 调用失败原因分类：区分「可重试的瞬时故障」与「重试也白搭的业务错误」，
+    // 供请求层重试循环判定是否指数退避重试。
+    enum class RpcError : uint8_t
+    {
+        OK = 0,           // 成功
+        TIMEOUT,          // 等待响应超时 → 可重试
+        CONN_CLOSED,      // 连接未建立/已断开 → 可重试
+        CIRCUIT_OPEN,     // 熔断器打开拒绝 → 可重试（换 host 绕过）
+        BACKOFF,          // 服务端限流退避 → 可重试
+        SERVICE_ERROR,    // 服务端业务/协议错误（SERVICE_NOT_FOUND/INVALID_PARAMS/PARSE_FAILED 等）→ 不可重试
+    };
+    // 判断错误是否可重试（瞬时故障可重试，业务错误不可重试）
+    static inline bool isRetryable(RpcError e)
+    {
+        return e == RpcError::TIMEOUT || e == RpcError::CONN_CLOSED ||
+               e == RpcError::CIRCUIT_OPEN || e == RpcError::BACKOFF;
+    }
+    // 指数退避重试配置：退避序列 delay = random(0, min(max_ms, base_ms * 2^attempt))
+    struct RetryConfig
+    {
+        int max_retries = 3;         // 重试次数（不含首次），共最多 1+3=4 次尝试
+        int base_ms = 10;            // 首次退避基数
+        int max_ms = 1000;           // 退避封顶
+        int retry_timeout_ms = 500;  // 重试尝试（attempt>0）的单次超时；首次仍用默认 5s
+    };
 }

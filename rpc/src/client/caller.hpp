@@ -24,14 +24,17 @@ namespace lcz_rpc
             RpcCaller(const Requestor::ptr &reqtor, CircuitBreaker::ptr breaker = nullptr)
                 : _requestor(reqtor), _breaker(std::move(breaker)) {}
 
-            // 同步 RPC：阻塞等待响应，结果写入 result
-            [[nodiscard]] bool call(const BaseConnection::ptr &conn, const std::string &method_name, const Json::Value &params, Json::Value &result)
+            // 同步 RPC：阻塞等待响应，结果写入 result。
+            // err 输出失败原因（供上层重试判定）；timeout 控制单次等待时长（重试尝试可传更短超时）。
+            [[nodiscard]] bool call(const BaseConnection::ptr &conn, const std::string &method_name, const Json::Value &params, Json::Value &result,
+                                    RpcError *err = nullptr, std::chrono::milliseconds timeout = std::chrono::seconds(5))
             {
                 LCZ_DEBUG("RpcCaller sync call method=%s", method_name.c_str());
                 std::string host = conn->peerAddress();
                 if (_breaker && !_breaker->allowRequest(method_name, host))
                 {
                     LCZ_WARN("熔断拒绝 method=%s host=%s", method_name.c_str(), host.c_str());
+                    if (err) *err = RpcError::CIRCUIT_OPEN;
                     return false;
                 }
                 // 构造reqmsg
@@ -41,12 +44,13 @@ namespace lcz_rpc
                 req_msg->setMethod(method_name);
                 req_msg->setParams(params);
                 BaseMessage::ptr resp_msg;
-                bool ret = _requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(req_msg), resp_msg);
+                bool ret = _requestor->send(conn, std::dynamic_pointer_cast<BaseMessage>(req_msg), resp_msg, timeout);
                 if (!ret)
                 {
                     LCZ_ERROR("rpc同步请求失败");
                     if (_breaker)
                         _breaker->onFailure(method_name, host);
+                    if (err) *err = RpcError::TIMEOUT;
                     return false;
                 }
                 RpcResponse::ptr rpc_respmsg = std::dynamic_pointer_cast<RpcResponse>(resp_msg);
@@ -55,6 +59,7 @@ namespace lcz_rpc
                     LCZ_ERROR("类型向下转换失败失败");
                     if (_breaker)
                         _breaker->onFailure(method_name, host);
+                    if (err) *err = RpcError::SERVICE_ERROR;
                     return false;
                 }
                 if (rpc_respmsg->rcode() != RespCode::SUCCESS)
@@ -62,12 +67,14 @@ namespace lcz_rpc
                     LCZ_ERROR("rpc请求出错：%s", errReason(rpc_respmsg->rcode()).c_str());
                     if (_breaker)
                         _breaker->onFailure(method_name, host);
+                    if (err) *err = fromRespCode(rpc_respmsg->rcode());
                     return false;
                 }
                 result = rpc_respmsg->result();
                 LCZ_DEBUG("RpcCaller sync call finish method=%s", method_name.c_str());
                 if (_breaker)
                     _breaker->onSuccess(method_name, host);
+                if (err) *err = RpcError::OK;
                 return true;
             }
             // 异步 RPC：通过 result future 获取结果
@@ -421,6 +428,17 @@ namespace lcz_rpc
                 return true;
             }
 
+        private:
+            // 服务端响应码 → 客户端错误分类：仅 TIMEOUT/BACKOFF 可重试，其余业务错误不可重试
+            static RpcError fromRespCode(RespCode code)
+            {
+                switch (code)
+                {
+                    case RespCode::TIMEOUT: return RpcError::TIMEOUT;
+                    case RespCode::BACKOFF: return RpcError::BACKOFF;
+                    default:                return RpcError::SERVICE_ERROR;
+                }
+            }
         private:
             Requestor::ptr _requestor;
             CircuitBreaker::ptr _breaker;

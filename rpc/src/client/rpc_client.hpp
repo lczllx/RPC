@@ -8,6 +8,9 @@
 #include "rpc_topic.hpp"
 #include <string>
 #include <cstdlib>
+#include <chrono>
+#include <thread>
+#include <random>
 #include "general/publicconfig.hpp"
 #include "general/log_system/lcz_log.h"
 #include "general/metrics_hooks.hpp"
@@ -193,6 +196,17 @@ namespace lcz_rpc
             muduo::net::EventLoop* _health_loop_ptr = nullptr;//健康检查线程指针
         };
 
+        // 指数退避 + 全抖动：delay = random(0, min(max_ms, base_ms * 2^attempt))
+        // 全抖动（random[0,exp]）比等比例抖动更能抑制惊群效应，AWS 架构博客推荐。
+        inline std::chrono::milliseconds backoffDelayMs(const RetryConfig &cfg, int attempt)
+        {
+            thread_local std::mt19937_64 rng(std::random_device{}());
+            int64_t exp = std::min<int64_t>(static_cast<int64_t>(cfg.base_ms) * (int64_t{1} << attempt), cfg.max_ms);
+            if (exp <= 0) exp = 1;
+            std::uniform_int_distribution<int64_t> dist(0, exp);
+            return std::chrono::milliseconds(dist(rng));
+        }
+
         // RPC 客户端类：支持直连或服务发现，提供同步/异步/回调三种 RPC 调用
         class RpcClient
         {
@@ -211,7 +225,8 @@ namespace lcz_rpc
                   _requestor(std::make_shared<Requestor>()),
                   _caller(std::make_shared<RpcCaller>(_requestor, _breaker)),
                   _dispacher(std::make_shared<Dispacher>()),
-                  _loadbalance_strategy(LoadBalanceStrategy::ROUND_ROBIN)
+                  _loadbalance_strategy(LoadBalanceStrategy::ROUND_ROBIN),
+                  _retry_config(makeRetryConfig())
             {
                 auto resp_cb = std::bind(&client::Requestor::onResponse, _requestor.get(), std::placeholders::_1, std::placeholders::_2);
                 _dispacher->registerhandler<BaseMessage>(lcz_rpc::MsgType::RSP_RPC, resp_cb);
@@ -241,22 +256,42 @@ namespace lcz_rpc
             {
                 _loadbalance_strategy = strategy;
             }
-            // 同步 RPC 调用
+            // 同步 RPC 调用（带指数退避重试）：
+            // 每次尝试重新走服务发现/负载均衡选 host，失败后按错误分类决定是否重试。
+            // 可重试错误（超时/断连/熔断打开/限流退避）则指数退避 + 全抖动后再试，最多 max_retries 次。
+            // 首次尝试用默认 5s 超时，重试尝试用更短超时（retry_timeout_ms），避免尾延迟被重试放大。
             [[nodiscard]] bool call(const std::string &method_name, const Json::Value &params, Json::Value &result, const std::string &key = {})
             {
-                BaseClient::ptr client = getClient(method_name, key);
-                if (client.get() == nullptr)
+                RpcError err = RpcError::OK;
+                for (int attempt = 0; ; ++attempt)
                 {
-                    LCZ_ERROR("服务获取失败：%s", method_name.c_str());
-                    return false;
+                    BaseClient::ptr client = getClient(method_name, key);
+                    if (client.get() == nullptr)
+                    {
+                        LCZ_ERROR("服务获取失败：%s", method_name.c_str());
+                        return false;
+                    }
+                    auto conn = client->connection();
+                    bool ok;
+                    if (!conn)
+                    {
+                        LCZ_ERROR("连接已断开，服务调用失败：%s", method_name.c_str());
+                        ok = false;
+                        err = RpcError::CONN_CLOSED;
+                    }
+                    else
+                    {
+                        // 首次 5s 超时，重试尝试用更短超时，快速换 host 重发
+                        auto timeout = (attempt == 0)
+                            ? std::chrono::seconds(5)
+                            : std::chrono::milliseconds(_retry_config.retry_timeout_ms);
+                        ok = _caller->call(conn, method_name, params, result, &err, timeout);
+                    }
+                    if (ok) return true;
+                    if (!isRetryable(err) || attempt >= _retry_config.max_retries) return false;
+                    LCZ_WARN("RPC 调用失败 method=%s err=%d，第 %d 次重试", method_name.c_str(), static_cast<int>(err), attempt + 1);
+                    std::this_thread::sleep_for(backoffDelayMs(_retry_config, attempt));
                 }
-                auto conn = client->connection();
-                if (!conn)
-                {
-                    LCZ_ERROR("连接已断开，服务调用失败：%s", method_name.c_str());
-                    return false;
-                }
-                return _caller->call(conn, method_name, params, result);
             }
             // 异步 RPC 调用，通过 future 获取结果
             [[nodiscard]] bool call(const std::string &method_name, Json::Value &params, RpcCaller::RpcAsyncRespose &result, const std::string &key = {})
@@ -347,6 +382,18 @@ namespace lcz_rpc
                 return std::make_shared<CircuitBreaker>(
                     cfg,
                     std::make_shared<lcz_rpc::server::MemoryCircuitStore>());
+            }
+
+            // 根据环境变量 LCZ_RETRY_* 读取指数退避重试配置
+            static RetryConfig makeRetryConfig()
+            {
+                RetryConfig cfg;
+                const char *env;
+                if ((env = std::getenv("LCZ_RETRY_MAX_RETRIES"))) cfg.max_retries = std::atoi(env);
+                if ((env = std::getenv("LCZ_RETRY_BASE_MS")))      cfg.base_ms = std::atoi(env);
+                if ((env = std::getenv("LCZ_RETRY_MAX_MS")))       cfg.max_ms = std::atoi(env);
+                if ((env = std::getenv("LCZ_RETRY_TIMEOUT_MS")))   cfg.retry_timeout_ms = std::atoi(env);
+                return cfg;
             }
 
             // 收到 OFFLINE 通知时：连接池移除 → 熔断器清理
@@ -458,6 +505,7 @@ namespace lcz_rpc
             RpcCaller::ptr _caller;
             Dispacher::ptr _dispacher;
             LoadBalanceStrategy _loadbalance_strategy;//负载均衡策略
+            RetryConfig _retry_config;//指数退避重试配置
         };
         // 主题客户端类：复用 Requestor 发送 TopicRequest，接收推送并分发到订阅回调
         class TopicClient
