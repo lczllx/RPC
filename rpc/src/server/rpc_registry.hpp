@@ -325,10 +325,21 @@ namespace lcz_rpc
                     return errResponse(conn,msg);
                 }
             }
-            // 连接关闭：仅清理内存映射，不删持久化数据。给 provider 重连窗口，超时由 sweep 兜底
+            // 连接关闭：删除 provider 并主动向发现者广播 OFFLINE，实现即时故障转移。
+            // disconnectProvider 返回该连接注册的 (method, host) 列表并删除映射；
+            // 对每项推下线通知，客户端收到后立即从连接池/负载均衡剔除，无需等 10s 健康检查。
+            // sweepAndNotify 仍兜底「心跳超时但 TCP 未断开」的 provider。
             void onconnShoutdown(const BaseConnection::ptr& conn)
             {
-                _rstore->cleanConnKeys(conn);
+                auto offline = _rstore->disconnectProvider(conn);
+                if (!offline.empty())
+                {
+                    LCZ_INFO("[Registry] 连接断开，即时下线 %zu 个 (method,host) 并广播 OFFLINE", offline.size());
+                    for (auto &pr : offline)
+                    {
+                        _discoverer->offlineNotify(pr.first, pr.second);
+                    }
+                }
                 _discoverer->delProvider(conn);
             }
             // 扫描超时 provider、删除并通知发现者
