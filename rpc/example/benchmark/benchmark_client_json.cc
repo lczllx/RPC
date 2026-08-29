@@ -250,9 +250,32 @@ int main(int argc, char* argv[])
     } else if (test_type == "throughput") {
         std::cout << "吞吐量测试，持续时间: " << duration << " 秒" << std::endl;
         throughput_test(client, method, params, duration, stats);
+    } else if (test_type == "steady") {
+        // 稳态测试：跑 duration 秒，每秒输出一行（与 benchmark_client 的 steady 对齐）
+        std::cout << "稳态测试，持续 " << duration << " 秒" << std::endl;
+        int batch_count = 0; double batch_lat = 0;
+        auto report_next = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        auto deadline    = report_next + std::chrono::seconds(duration - 1);
+        stats.start_time = std::chrono::steady_clock::now();
+        while (std::chrono::steady_clock::now() < deadline) {
+            auto t1 = std::chrono::steady_clock::now();
+            Json::Value result;
+            bool ok = client.call(method, params, result);
+            auto t2 = std::chrono::steady_clock::now();
+            double lat = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+            stats.record(lat, ok);
+            batch_count++; batch_lat += lat;
+            if (t2 >= report_next) {
+                std::cout << "Sending EchoRequest at qps=" << batch_count
+                          << " latency=" << static_cast<int>(batch_lat / batch_count) << std::endl;
+                batch_count = 0; batch_lat = 0;
+                report_next = t2 + std::chrono::seconds(1);
+            }
+        }
+        stats.end_time = std::chrono::steady_clock::now();
     } else {
         std::cerr << "未知的测试类型: " << test_type << std::endl;
-        std::cerr << "支持的类型: single, multi, throughput" << std::endl;
+        std::cerr << "支持的类型: single, multi, throughput, steady" << std::endl;
         return -1;
     }
 
